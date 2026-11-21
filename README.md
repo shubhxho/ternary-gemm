@@ -7,6 +7,7 @@ Fused **ternary matmul kernels for LLM decode on NVIDIA GPUs**, written in Rust 
 * A safe Rust API on top of [`cudarc`](https://crates.io/crates/cudarc). The kernels are compiled at runtime with NVRTC, so **no CUDA toolkit or nvcc is needed to build**.
 * A pure-Rust CPU reference. On the int8 path the GPU output is designed to be **bit-identical** to it.
 * Benchmarks against **cuBLAS FP16** and a **naive ternary kernel**, timed with CUDA events.
+* A **latency-first path for small signal models** (e.g. a market-feature vector scored by a few-layer ternary MLP at batch 1). It runs the whole MLP in one kernel, with pinned memory, CUDA-graph replay on a high-priority stream and an experimental persistent kernel. There is also an allocation-free **AVX2 CPU engine**, plus a tail-latency benchmark (p50 to p99.9, max, jitter histograms). See [For quant / HFT](#for-quant--hft-small-signal-models-at-batch-1).
 
 > **Status: no GPU numbers have been measured yet.** The kernels compile with NVRTC 12.8, and `ptxas` assembles them for sm_80, sm_86, sm_89, sm_90 and sm_120. The CPU reference and a lane-by-lane emulation of the kernel index math pass on the CPU. The machine this was written on has **no GPU**, so every GPU latency or bandwidth figure below is either **NOT MEASURED** or explicitly a **theoretical estimate**. Run `./scripts/bench.sh` on a real GPU to fill them in.
 
@@ -16,8 +17,10 @@ Fused **ternary matmul kernels for LLM decode on NVIDIA GPUs**, written in Rust 
 
 ```bash
 git clone https://github.com/shubhxho/ternary-gemm && cd ternary-gemm
-./scripts/bench.sh            # build -> GPU tests -> benchmarks -> results/<time>-<gpu>.{md,csv} + measured charts results/*.png
+./scripts/bench.sh            # build -> GPU tests -> GEMM benchmarks + signal-model latency -> results/*.{md,csv,png}
 ./scripts/bench.sh --quick    # batches 1 and 16 only
+./scripts/latency_cpu.sh      # signal-model latency on the CPU only (no GPU needed)
+cargo run --release --example signal_model   # synthetic market-feature loop
 ```
 
 You need an NVIDIA driver (RTX 50-series needs driver ≥ 570 and CUDA ≥ 12.8 for sm_120) and Rust from [rustup](https://rustup.rs). You also need `libnvrtc` and `libcublas` from CUDA 12.x. If they aren't installed, the script pip-installs the CUDA 12.8 runtime wheels into `.venv-cuda/`. The script fails instead of skipping if no GPU is found (it sets `TERNARY_REQUIRE_GPU=1` for the tests).
@@ -65,6 +68,51 @@ graph.launch()?;                        // replays every launch in one call; buf
 
 Each call checks every buffer length and shape before launching, so bad input returns an error instead of reading or writing out of bounds.
 
+## For quant / HFT: small signal models at batch 1
+
+The LLM kernels above are built for throughput on big matrices. A trading model is the opposite case: a few hundred features, a few small layers, one request at a time, where **p99 and max latency matter more than throughput**. This path is built for that case.
+
+```rust
+use ternary_gemm::{gpu::Gpu, mlp::{Act, CpuEngine, TernaryMlp}, signal::{SignalEngine, PersistentEngine}};
+
+let model = TernaryMlp::from_f32(&[64, 256, 256, 1], &weights, &biases, Act::Relu)?; // absmean -> ternary
+let mut cpu = CpuEngine::new(&model)?;            // AVX2, zero allocations per call
+cpu.forward_into(&features, &mut signal);
+
+let gpu = Gpu::new(0)?;                            // highest-priority stream
+let mut eng = SignalEngine::new(&gpu, &model, 1, None)?;  // preallocates + captures one CUDA graph
+eng.infer(&features, &mut signal)?;                // pinned H2D -> whole-MLP kernel -> D2H, spin-wait
+let mut p = PersistentEngine::start(&gpu, &model, None)?; // EXPERIMENTAL: resident kernel + doorbell
+p.infer(&features, &mut signal)?;
+```
+
+What it does:
+* **One launch for the whole model.** `ternary_mlp` keeps activations in shared memory between layers, re-quantizing them to int8 after each layer. Weights use a k-major layout, so the warp's loads coalesce and activation reads are shared-memory broadcasts. Any depth works; widths go up to 4096 and K must be a multiple of 16. `batch > 1` runs one block per sample.
+* **Nothing allocates on the hot path.** Device buffers and page-locked host staging buffers are allocated once, in `new()`. A request is `copy into pinned buffer → graph launch → spin on cuStreamQuery → read pinned output`: one driver call to submit and none to allocate. `Wait::Block` and `Submit::Direct` exist for comparison.
+* **Persistent mode (experimental).** One block stays resident and spins on a doorbell in mapped pinned host memory. It reads the features and writes the signal zero-copy over PCIe, so there is no launch and no memcpy call. The cost is one SM and one host core busy-waiting, and you must `stop()` it before synchronizing the whole context. It has a timeout, and on a stop failure the mapped buffers are leaked instead of freed, so a still-running kernel can't touch freed memory.
+* **Bit-exact everywhere.** The CPU reference, the AVX2 `CpuEngine` (`vpmaddubsw` on the codes `w+1`, 4 rows per pass), a lane-level emulation of the CUDA kernel, and the GPU kernels (tested when a GPU is present) all produce the same bits.
+* **Baselines in the same harness:** the scalar reference, a dense f32 AVX2+FMA matvec of the same model, and cuBLAS FP16 (dense fp16 weights, one GEMM plus one bias/activation kernel per layer, captured as a graph with the copies).
+
+Measured on this repo's build machine (**CPU only**: Intel Xeon cloud VM, 8 vCPUs, AVX2, run pinned to one core with `taskset`; 50,000 requests per path after 5,000 warm-up; synthetic features, random untrained models). These are end-to-end per-request latencies in µs. The full report and charts are in [`results/20261122-025900-cpu-latency.md`](results/20261122-025900-cpu-latency.md).
+
+| model (widths) | path | p50 | p99 | p99.9 | max |
+|---|---|---|---|---|---|
+| tiny 64-256-256-1 | ternary SIMD (`CpuEngine`) | 2.82 | 3.64 | 6.50 | 34.6 |
+| tiny 64-256-256-1 | dense f32 AVX2 | 4.11 | 5.46 | 7.81 | 21.3 |
+| small 256-1024-1024-16 | ternary SIMD (`CpuEngine`) | 22.63 | 44.98 | 71.49 | 114.7 |
+| small 256-1024-1024-16 | dense f32 AVX2 | 132.20 | 186.96 | 313.24 | 31291.5 |
+| medium 1024×4 layers → 4 | ternary SIMD (`CpuEngine`) | 92.95 | 128.87 | 187.89 | 667.7 |
+| medium 1024×4 layers → 4 | dense f32 AVX2 | 365.91 | 436.94 | 607.71 | 89419.3 |
+
+![CPU latency percentiles, measured](results/20261122-025900-cpu-latency-tail.png)
+
+Max values on a shared VM include scheduler and hypervisor noise. On a tuned box (isolated cores, no frequency scaling) the tail should be tighter, but that has not been measured here. **GPU latency is NOT MEASURED**: the build machine has no GPU. `./scripts/bench.sh` on a GPU machine adds the GPU rows (graph + spin, direct, blocking sync, persistent, cuBLAS FP16) to the same tables and charts.
+
+Honest positioning:
+* This is an inference **kernel library**. It contains no strategy, no data, and no claim about trading performance. The models in the benchmarks are random.
+* For tiny models, a good CPU path is often the right answer: no PCIe round trip, and it's already in the low µs. A GPU starts to pay off as models grow, or when many instruments are scored per tick (`batch > 1`). The benchmark is there to find where that crossover is on your hardware.
+* None of these latency techniques is new. CUDA graphs, pinned/mapped memory, persistent kernels and spin-waiting are standard. Serious HFT stacks also use kernel-bypass NICs, FPGAs, isolated cores and pinned clocks, which are out of scope here.
+
 ## Design
 
 ### Weight format
@@ -84,9 +132,11 @@ Microsoft's BitNet GPU kernel uses the same basic decode-to-int8-then-dp4a idea 
 | `ternary_i8_b{BT}_r{R}` | Main W2A8 loop. One warp computes `R ∈ {1,2,4}` rows for up to `BT ∈ {1,2,4,8,16}` tokens. Weights are decoded once into registers and reused across the batch. 16 `dp4a` per lane per row per token per chunk. Warp-shuffle reduction. Epilogue `(acc − Σq) / s · scale (+ residual)` with explicit `__fdiv_rn`, `__fmul_rn` and `__fadd_rn`, so there is no FMA contraction and the result is bit-exact against the CPU. |
 | `ternary_i8_fused_b{BT}_r{R}` | Single launch. Each block re-quantizes the activations (fp16 → RMSNorm → int8) into shared memory, then runs the same loop. It trades redundant L2 reads of the small activation vector for one fewer launch and one fewer global round trip. Shared memory needed is `batch·K` bytes. At startup the fused kernels opt in to the device's large dynamic shared-memory carve-out (`MAX_SHARED_MEMORY_PER_BLOCK_OPTIN − 1 KiB`, ≈ 99 KiB on sm_86/89/120, ≈ 163 KiB on sm_80, ≈ 227 KiB on sm_90). If the driver refuses, the limit falls back to 47 KiB. The limit in use is `gpu.info.fused_smem_limit`. |
 | `ternary_f16_b{BT}_r{R}` | W2A16. Each code byte is spliced under `0x4B000000`, giving the float `2²³ + c`, and `2²³ + 1` is subtracted, so decoding a weight is one `PRMT` plus one `FADD`. fp32 FMA accumulation. |
+| `ternary_mlp`, `ternary_mlp_persistent` | Whole small MLP in one block (see *For quant / HFT*). K-major ternary words, int8 activations in shared memory, per-layer absmax re-quantization, `_rn` epilogue with bias and ReLU/ReLU². The persistent variant loops on a mapped-memory doorbell. |
+| `f32_to_f16`, `bias_act_f16` | Glue for the cuBLAS FP16 MLP baseline. |
 | `naive_i8`, `naive_f16` | Baselines: one thread per output, natural 2-bit layout, scalar decode and multiply, uncoalesced. |
 
-The batch tile and rows-per-warp are template instantiations, 51 kernels in total. The benchmark sweeps `R` and reports the best one. The library default is a heuristic that picks the largest `R` that still gives at least 4 blocks per SM.
+The batch tile and rows-per-warp are template instantiations, 55 kernels in total. The benchmark sweeps `R` and reports the best one. The library default is a heuristic that picks the largest `R` that still gives at least 4 blocks per SM.
 
 From `ptxas -v` (CUDA 12.8; full output in [`docs/compile_check_output.txt`](docs/compile_check_output.txt)): on sm_120, `ternary_i8_b1_r{1,2,4}` uses 38, 40 and 48 registers and `ternary_i8_b16_r{1,2,4}` uses 62, 108 and 204. Nothing spills on sm_90 or sm_120. On sm_80, sm_86 and sm_89, two variants spill up to 24 bytes (`ternary_f16_b4_r2`, plus `ternary_i8_fused_b2_r2` on sm_80).
 
@@ -102,6 +152,8 @@ The kernels are compiled at first use, for the exact GPU (`compute_XY` of the de
   * int8 quantization and all W2A8 kernels, including the naive one: **bit-exact**.
   * Fused RMSNorm: within 1% of max |y|. The GPU uses `rsqrtf` and a different summation order, so the int8 rounding of a few elements can differ by 1.
   * W2A16 and cuBLAS: within 0.2% and 1% of max |y|.
+* `tests/mlp.rs` (CPU): for 5 model shapes × 3 activations × 4 input patterns (normal, tiny, outliers, all-zero), the AVX2 `CpuEngine` and a lane-level emulation of `ternary_mlp` both match the scalar reference **bit for bit**.
+* `tests/gpu.rs::signal_models` (GPU): `SignalEngine` (graph and direct, batch 1 and 4, 128/default/1024 threads) and `PersistentEngine` (1,000 requests) bit-exact against the reference; cuBLAS FP16 within tolerance.
 * The benchmark re-runs a correctness check before timing and labels any mismatch.
 
 ## Results
@@ -177,6 +229,8 @@ What is narrower or different here:
 
 ## Limitations
 
+* **Signal-model path:** widths are at most 4096 and K must be a multiple of 16 (zero-pad features). One block per sample means a single SM does all the work, which is right for latency on small models but caps large layers at one SM's bandwidth. The persistent engine is batch 1 only, experimental and untested on hardware. Its host↔device ordering relies on x86 TSO plus `__threadfence_system`. `CpuEngine` stores one byte per weight, so models over the L2 size become memory-bound; a 2-bit in-register decode for the CPU is not implemented. The dense f32 baseline is a straightforward AVX2+FMA matvec, not MKL or oneDNN.
+
 * **No GPU measurements yet**, as described above.
 * `K` must be a multiple of 64. Batch is limited to 1–16, which is decode-oriented; there is no tensor-core path for prefill.
 * Scales are per row (or per tensor), with no per-group scales.
@@ -194,9 +248,15 @@ src/pack.rs               absmean quantization, 2-bit packing (permuted + natura
 src/reference.rs          CPU reference (oracle)
 src/gpu.rs                safe cudarc wrapper, cuBLAS baseline, CUDA-event timer
 src/bin/bench.rs          benchmark -> Markdown report (+ --csv)
+src/mlp.rs                small ternary MLP (signal model): reference, AVX2 CpuEngine, dense f32 baseline
+src/signal.rs             GPU latency engines: SignalEngine (graph + pinned), PersistentEngine, CublasMlp
+src/bin/latency.rs        batch-1 end-to-end latency benchmark (p50..max, histograms, CSV)
+examples/signal_model.rs  synthetic feature-stream inference loop
 src/bin/compile_check.rs  NVRTC + ptxas register/spill report (no GPU needed)
-tests/                    cpu_reference, kernel_emulation (CPU), gpu (needs GPU)
+tests/                    cpu_reference, kernel_emulation, mlp (CPU), gpu (needs GPU)
 scripts/bench.sh          one-shot build + verify + benchmark + measured charts
+scripts/latency_cpu.sh    CPU-only latency run (no GPU needed) + charts
+scripts/plot_latency.py   latency CSV -> tail-percentile and histogram charts
 scripts/plot_results.py   bench CSV -> results/*.png ("Measured on <GPU>")
 scripts/make_doc_charts.py  docs/img/*.png (theoretical charts + data-flow diagram)
 ```

@@ -178,8 +178,10 @@ impl Gpu {
         // Single stream: skip cudarc's per-buffer event tracking (it would add work to every launch).
         // SAFETY: all work is issued on one stream, so no cross-stream synchronization is needed.
         unsafe { ctx.disable_event_tracking() };
-        // A real (non-legacy) stream: the legacy default stream can't be captured into a CUDA graph.
-        let stream = ctx.new_stream()?;
+        // A real (non-legacy) stream, so it can be captured into a CUDA graph, created at the
+        // device's highest priority so latency-critical work is scheduled ahead of other streams.
+        let (_least, greatest) = cudarc::driver::result::stream::get_priority_range()?;
+        let stream = ctx.new_stream_with_priority(greatest)?;
         let (maj, min) = ctx.compute_capability()?;
         if (maj, min) < (6, 1) {
             return Err(Error::NoCuda(format!(
@@ -229,6 +231,10 @@ impl Gpu {
             "fill_ternary_codes".into(),
             "fill_f16".into(),
             "fill_f32".into(),
+            "ternary_mlp".into(),
+            "ternary_mlp_persistent".into(),
+            "f32_to_f16".into(),
+            "bias_act_f16".into(),
         ];
         for bt in BATCH_TILES {
             for r in ROWS_PER_WARP {
@@ -287,7 +293,7 @@ impl Gpu {
         })
     }
 
-    fn func(&self, name: &str) -> &CudaFunction {
+    pub(crate) fn func(&self, name: &str) -> &CudaFunction {
         &self.funcs[name]
     }
 

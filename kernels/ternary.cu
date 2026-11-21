@@ -463,3 +463,163 @@ extern "C" __global__ void fill_f32(float* p, unsigned long long n, unsigned see
         p[i] = 0.5f + (float)(h & 0xffffu) / 65536.f;
     }
 }
+
+// =================================================================================
+// Latency-first small-model path (quant / signal models): a whole ternary MLP in ONE block.
+//
+// Weight layout ("k-major", per layer): word w (k-block of 16 weights) of row n is at
+// W[layer_off + w * N + n], same in-word interleave as above. Thread t owns rows t, t+T, ...,
+// so a warp reads 32 consecutive words (coalesced) and every lane reads the same activation
+// word (shared-memory broadcast). Layers are chained through shared memory, so a K, N <= 4096
+// model of any depth is one launch with no global round trips between layers.
+//
+// Per layer (bit-exact against src/mlp.rs):
+//   s = 127 / max(absmax(x), 1e-5);  q = clamp(rint(x * s), -128, 127)
+//   y = ((acc - sum_q) / s) * scale[n] + bias[n];  act = identity | relu | relu^2
+// desc[4*l .. 4*l+3] = {N, K, act, unused}; sb = per layer [scale[N], bias[N]] back to back.
+// =================================================================================
+
+#define MLP_MAX_DIM 4096
+#define ACT_IDENTITY 0
+#define ACT_RELU 1
+#define ACT_RELU2 2
+
+__device__ __forceinline__ float mlp_act(float v, int act) {
+    if (act == ACT_RELU) return v > 0.0f ? v : 0.0f;
+    if (act == ACT_RELU2) { float r = v > 0.0f ? v : 0.0f; return __fmul_rn(r, r); }
+    return v;
+}
+
+// Block-wide reductions (blockDim.x a multiple of 32, <= 1024). `red` holds >= 32 entries.
+__device__ __forceinline__ float mlp_block_max(float v, float* red) {
+    for (int o = 16; o > 0; o >>= 1) v = fmaxf(v, __shfl_xor_sync(0xffffffffu, v, o));
+    const int w = threadIdx.x >> 5, l = threadIdx.x & 31, nw = blockDim.x >> 5;
+    __syncthreads();
+    if (l == 0) red[w] = v;
+    __syncthreads();
+    v = l < nw ? red[l] : 0.0f;
+    for (int o = 16; o > 0; o >>= 1) v = fmaxf(v, __shfl_xor_sync(0xffffffffu, v, o));
+    return v;
+}
+__device__ __forceinline__ int mlp_block_sum(int v, int* red) {
+    for (int o = 16; o > 0; o >>= 1) v += __shfl_xor_sync(0xffffffffu, v, o);
+    const int w = threadIdx.x >> 5, l = threadIdx.x & 31, nw = blockDim.x >> 5;
+    __syncthreads();
+    if (l == 0) red[w] = v;
+    __syncthreads();
+    v = l < nw ? red[l] : 0;
+    for (int o = 16; o > 0; o >>= 1) v += __shfl_xor_sync(0xffffffffu, v, o);
+    return v;
+}
+
+// One forward pass for one sample. x: [in_dim] (may be mapped host memory, read volatile),
+// y: [out_dim]. smem: 2 * max_dim floats followed by max_dim bytes of int8 activations.
+__device__ void mlp_forward(const int* __restrict__ desc, int layers, const unsigned* __restrict__ W,
+                            const float* __restrict__ sb, const volatile float* x, int in_dim, float* y,
+                            int max_dim, unsigned char* smem) {
+    __shared__ float redf[32];
+    __shared__ int redi[32];
+    float* cur = reinterpret_cast<float*>(smem);
+    float* nxt = cur + max_dim;
+    int* qw = reinterpret_cast<int*>(nxt + max_dim);
+    const int tid = threadIdx.x, T = blockDim.x;
+    for (int i = tid; i < in_dim; i += T) cur[i] = x[i];
+    __syncthreads();
+    size_t woff = 0, soff = 0;
+    for (int l = 0; l < layers; ++l) {
+        const int n = desc[4 * l], k = desc[4 * l + 1], act = desc[4 * l + 2];
+        float m = 0.0f;
+        for (int i = tid; i < k; i += T) m = fmaxf(m, fabsf(cur[i]));
+        m = mlp_block_max(m, redf);
+        const float s = __fdiv_rn(127.0f, fmaxf(m, 1e-5f));
+        int part = 0;
+        for (int i = tid; i < (k >> 2); i += T) {
+            unsigned packed = 0;
+#pragma unroll
+            for (int j = 0; j < 4; ++j) {
+                int q = (int)rintf(__fmul_rn(cur[4 * i + j], s));
+                q = q < -128 ? -128 : (q > 127 ? 127 : q);
+                part += q;
+                packed |= ((unsigned)q & 0xffu) << (8 * j);
+            }
+            qw[i] = (int)packed;
+        }
+        const int sum_q = mlp_block_sum(part, redi);  // also a barrier: qw is complete
+        const unsigned* Wl = W + woff;
+        const int kw = k >> 4;
+        const bool last = l == layers - 1;
+        for (int r = tid; r < n; r += T) {
+            int acc = 0;
+#pragma unroll 4
+            for (int w = 0; w < kw; ++w) {
+                const unsigned word = __ldg(Wl + (size_t)w * n + r);
+                acc = __dp4a((int)(word & 0x03030303u), qw[4 * w + 0], acc);
+                acc = __dp4a((int)((word >> 2) & 0x03030303u), qw[4 * w + 1], acc);
+                acc = __dp4a((int)((word >> 4) & 0x03030303u), qw[4 * w + 2], acc);
+                acc = __dp4a((int)((word >> 6) & 0x03030303u), qw[4 * w + 3], acc);
+            }
+            float v = __fdiv_rn((float)(acc - sum_q), s);
+            v = __fmul_rn(v, __ldg(sb + soff + r));
+            v = __fadd_rn(v, __ldg(sb + soff + n + r));
+            v = mlp_act(v, act);
+            if (last) y[r] = v; else nxt[r] = v;
+        }
+        woff += (size_t)n * kw;
+        soff += 2 * (size_t)n;
+        float* t = cur; cur = nxt; nxt = t;
+        __syncthreads();
+    }
+}
+
+// One block per sample: x [batch][in_dim] -> y [batch][out_dim].
+extern "C" __global__ void __launch_bounds__(1024) ternary_mlp(const int* __restrict__ desc, int layers,
+        const unsigned* __restrict__ W, const float* __restrict__ sb, const float* x, float* y,
+        int in_dim, int out_dim, int max_dim) {
+    extern __shared__ __align__(16) unsigned char mlp_smem[];
+    mlp_forward(desc, layers, W, sb, x + (size_t)blockIdx.x * in_dim, in_dim,
+                y + (size_t)blockIdx.x * out_dim, max_dim, mlp_smem);
+}
+
+// EXPERIMENTAL persistent mode: one block stays resident and spins on a doorbell in mapped
+// (zero-copy) pinned host memory, so a request costs no kernel launch and no memcpy calls.
+// ctrl[0] = request sequence number written by the host (0xffffffff = stop),
+// ctrl[1] = last completed sequence number written by the device.
+// x / y are mapped host buffers (the host writes x before ringing, reads y after done).
+extern "C" __global__ void __launch_bounds__(1024) ternary_mlp_persistent(const int* __restrict__ desc,
+        int layers, const unsigned* __restrict__ W, const float* __restrict__ sb, volatile unsigned* ctrl,
+        const float* x, float* y, int in_dim, int out_dim, int max_dim) {
+    extern __shared__ __align__(16) unsigned char mlp_smem[];
+    __shared__ unsigned seq_s;
+    unsigned last = ctrl[1];
+    for (;;) {
+        if (threadIdx.x == 0) {
+            unsigned v;
+            do { v = ctrl[0]; } while (v == last);
+            __threadfence_system();
+            seq_s = v;
+        }
+        __syncthreads();
+        const unsigned v = seq_s;
+        if (v == 0xffffffffu) return;
+        mlp_forward(desc, layers, W, sb, (const volatile float*)x, in_dim, y, max_dim, mlp_smem);
+        __threadfence_system();  // y visible to the host before the completion flag
+        __syncthreads();
+        if (threadIdx.x == 0) ctrl[1] = v;
+        last = v;
+        __syncthreads();
+    }
+}
+
+// Helpers for the cuBLAS FP16 MLP baseline.
+extern "C" __global__ void f32_to_f16(const float* __restrict__ x, half_t* __restrict__ y, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) y[i] = f2h_rn(x[i]);
+}
+extern "C" __global__ void bias_act_f16(half_t* __restrict__ y, const float* __restrict__ bias, int n, int act,
+                                        float* __restrict__ out_f32) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        float v = mlp_act(h2f(y[i]) + bias[i], act);
+        if (out_f32) out_f32[i] = v; else y[i] = f2h_rn(v);
+    }
+}

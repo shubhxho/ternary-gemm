@@ -290,3 +290,100 @@ fn rejects_bad_shapes() {
         .gemm_i8(&w, &acts, None, &mut small, Launch::default())
         .is_err()); // out too small
 }
+
+mod signal_models {
+    use super::gpu;
+    use ternary_gemm::mlp::{Act, TernaryMlp};
+    use ternary_gemm::signal::{CublasMlp, PersistentEngine, SignalEngine, Submit, Wait};
+
+    const MODELS: &[&[usize]] = &[
+        &[64, 256, 256, 1],
+        &[48, 96, 8],
+        &[1024, 1024, 1024, 1024, 4],
+    ];
+
+    fn feats(seed: u32, d: usize) -> Vec<f32> {
+        (0..d)
+            .map(|i| {
+                ((i as u32).wrapping_mul(2654435761).wrapping_add(seed) % 2001) as f32 / 1000.0
+                    - 1.0
+            })
+            .collect()
+    }
+
+    #[test]
+    fn signal_engine_bit_exact() {
+        let Some(g) = gpu() else { return };
+        for (mi, dims) in MODELS.iter().enumerate() {
+            for act in [Act::Relu, Act::Relu2] {
+                let m = TernaryMlp::random(dims, act, mi as u64).unwrap();
+                for batch in [1usize, 4] {
+                    for threads in [None, Some(128), Some(1024)] {
+                        let mut e = SignalEngine::new(&g, &m, batch, threads).unwrap();
+                        assert!(e.has_graph(), "graph capture failed: {:?}", e.graph_error);
+                        for (submit, wait) in
+                            [(Submit::Graph, Wait::Spin), (Submit::Direct, Wait::Block)]
+                        {
+                            for round in 0..3u32 {
+                                let xs: Vec<Vec<f32>> = (0..batch)
+                                    .map(|b| feats(round * 31 + b as u32, m.in_dim()))
+                                    .collect();
+                                for (b, x) in xs.iter().enumerate() {
+                                    e.input_mut()[b * m.in_dim()..(b + 1) * m.in_dim()]
+                                        .copy_from_slice(x);
+                                }
+                                e.run(submit, wait).unwrap();
+                                for (b, x) in xs.iter().enumerate() {
+                                    let r = m.forward_reference(x);
+                                    let got = &e.output()[b * m.out_dim()..(b + 1) * m.out_dim()];
+                                    assert_eq!(
+                                        super::bits32(&r),
+                                        super::bits32(got),
+                                        "{dims:?} {act:?} b{batch} {threads:?} {submit:?}"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn persistent_engine_bit_exact() {
+        let Some(g) = gpu() else { return };
+        let m = TernaryMlp::random(&[64, 256, 256, 1], Act::Relu, 5).unwrap();
+        let mut e = PersistentEngine::start(&g, &m, None).unwrap();
+        let mut out = vec![0f32; 1];
+        for i in 0..1000u32 {
+            let x = feats(i, 64);
+            e.infer(&x, &mut out).unwrap();
+            assert_eq!(
+                super::bits32(&m.forward_reference(&x)),
+                super::bits32(&out),
+                "request {i}"
+            );
+        }
+        e.stop().unwrap();
+    }
+
+    #[test]
+    fn cublas_mlp_close() {
+        let Some(g) = gpu() else { return };
+        let m = TernaryMlp::random(&[64, 256, 256, 4], Act::Relu, 2).unwrap();
+        let mut c = CublasMlp::new(&g, &m).unwrap();
+        let x = feats(1, 64);
+        c.input_mut().copy_from_slice(&x);
+        c.run(Submit::Graph, Wait::Spin).unwrap();
+        let r = m.forward_reference(&x);
+        let scale = r.iter().fold(1e-3f32, |a, v| a.max(v.abs()));
+        for (a, b) in r.iter().zip(c.output()) {
+            assert!((a - b).abs() <= 0.1 * scale, "{a} vs {b}");
+        }
+    }
+}
+
+fn bits32(v: &[f32]) -> Vec<u32> {
+    v.iter().map(|x| x.to_bits()).collect()
+}

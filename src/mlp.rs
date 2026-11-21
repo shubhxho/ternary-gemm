@@ -1,0 +1,562 @@
+//! Small ternary MLPs for latency-critical scoring (e.g. a market-feature vector in, a signal out).
+//!
+//! * [`TernaryMlp`]: the model (ternary weights + per-row scale + bias per layer, BitNet absmax
+//!   int8 activations between layers) and its scalar [`TernaryMlp::forward_reference`] oracle.
+//! * [`CpuEngine`]: an allocation-free CPU path (decoded int8 weights, SIMD dot products with
+//!   runtime AVX2 dispatch on x86_64). Bit-identical to the reference.
+//! * [`DenseF32Mlp`]: the same architecture with dense f32 weights, as a plain CPU baseline.
+//!
+//! The GPU engines that run the same model live in [`crate::signal`] and are bit-identical too:
+//! every float operation below is a single IEEE round-to-nearest op that the CUDA kernel performs
+//! in the same order (`__fdiv_rn`, `__fmul_rn`, `__fadd_rn`, `rintf`).
+
+use crate::pack::quantize_absmean;
+use rand::{rngs::StdRng, Rng, SeedableRng};
+
+/// Largest layer width the single-block GPU kernel supports (shared-memory resident activations).
+pub const MLP_MAX_DIM: usize = 4096;
+/// Layer input widths must be a multiple of this (one packed `u32` holds 16 weights).
+pub const MLP_K_ALIGN: usize = 16;
+
+/// Activation applied after a layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Act {
+    Identity = 0,
+    Relu = 1,
+    /// `relu(x)^2`, as used in BitNet b1.58 FFNs.
+    Relu2 = 2,
+}
+
+#[inline(always)]
+fn act(v: f32, a: Act) -> f32 {
+    match a {
+        Act::Identity => v,
+        Act::Relu => {
+            if v > 0.0 {
+                v
+            } else {
+                0.0
+            }
+        }
+        Act::Relu2 => {
+            let r = if v > 0.0 { v } else { 0.0 };
+            r * r
+        }
+    }
+}
+
+/// One ternary layer: `y = act(((W_t · q(x)) / s) * scale + bias)`.
+#[derive(Debug, Clone)]
+pub struct MlpLayer {
+    /// Output width.
+    pub n: usize,
+    /// Input width (multiple of 16).
+    pub k: usize,
+    /// Ternary weights `[n][k]`, values in `{-1, 0, 1}`.
+    pub w: Vec<i8>,
+    pub scale: Vec<f32>,
+    pub bias: Vec<f32>,
+    pub act: Act,
+}
+
+impl MlpLayer {
+    /// Packed "k-major" words for the GPU kernel: word `w` of row `r` at `w * n + r`; inside a
+    /// word, weight `16w + 4j + i` sits at bits `8i + 2j` as code `weight + 1`.
+    pub fn kmajor_words(&self) -> Vec<u32> {
+        let kw = self.k / 16;
+        let mut out = vec![0u32; kw * self.n];
+        for r in 0..self.n {
+            for w in 0..kw {
+                let mut word = 0u32;
+                for j in 0..4 {
+                    for i in 0..4 {
+                        let c = (self.w[r * self.k + 16 * w + 4 * j + i] + 1) as u32;
+                        word |= c << (8 * i + 2 * j);
+                    }
+                }
+                out[w * self.n + r] = word;
+            }
+        }
+        out
+    }
+}
+
+/// A feed-forward stack of ternary layers.
+#[derive(Debug, Clone)]
+pub struct TernaryMlp {
+    pub layers: Vec<MlpLayer>,
+}
+
+/// Per-token int8 quantization exactly as the kernels do it. Returns `(s, sum_q)`.
+pub fn quantize_into(x: &[f32], q: &mut [i8]) -> (f32, i32) {
+    #[cfg(target_arch = "x86_64")]
+    if std::is_x86_feature_detected!("sse4.1") {
+        // SAFETY: SSE4.1 detected (gives an inline round-to-nearest-even instead of a libm call).
+        return unsafe { quantize_sse41(x, q) };
+    }
+    quantize_generic(x, q)
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse4.1")]
+unsafe fn quantize_sse41(x: &[f32], q: &mut [i8]) -> (f32, i32) {
+    quantize_generic(x, q)
+}
+
+#[inline(always)]
+fn quantize_generic(x: &[f32], q: &mut [i8]) -> (f32, i32) {
+    let mut m = 0.0f32;
+    for &v in x {
+        m = m.max(v.abs());
+    }
+    let s = 127.0f32 / m.max(1e-5);
+    let mut sum = 0i32;
+    for (d, &v) in q.iter_mut().zip(x) {
+        let t = (v * s).round_ties_even().clamp(-128.0, 127.0) as i32;
+        sum += t;
+        *d = t as i8;
+    }
+    (s, sum)
+}
+
+impl TernaryMlp {
+    /// Validate shapes: widths chain, every K % 16 == 0, every width <= [`MLP_MAX_DIM`].
+    pub fn validate(&self) -> Result<(), String> {
+        if self.layers.is_empty() {
+            return Err("MLP has no layers".into());
+        }
+        for (i, l) in self.layers.iter().enumerate() {
+            if l.k == 0 || l.k % MLP_K_ALIGN != 0 {
+                return Err(format!(
+                    "layer {i}: K={} must be a nonzero multiple of 16 (zero-pad the features)",
+                    l.k
+                ));
+            }
+            if l.n == 0 || l.n > MLP_MAX_DIM || l.k > MLP_MAX_DIM {
+                return Err(format!(
+                    "layer {i}: N={} K={} must be in 1..={MLP_MAX_DIM}",
+                    l.n, l.k
+                ));
+            }
+            if l.w.len() != l.n * l.k || l.scale.len() != l.n || l.bias.len() != l.n {
+                return Err(format!(
+                    "layer {i}: buffer lengths don't match N={} K={}",
+                    l.n, l.k
+                ));
+            }
+            if l.w.iter().any(|&v| !(-1..=1).contains(&v)) {
+                return Err(format!("layer {i}: weights must be in {{-1,0,1}}"));
+            }
+            if i + 1 < self.layers.len() {
+                let next = &self.layers[i + 1];
+                if next.k != l.n {
+                    return Err(format!(
+                        "layer {i}: N={} but layer {} has K={}",
+                        l.n,
+                        i + 1,
+                        next.k
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Build from float weights (`weights[i]` is `[n][k]` row-major) with BitNet absmean
+    /// quantization, per-row scales. `dims = [in, hidden.., out]`; hidden layers use `hidden_act`,
+    /// the last layer is linear.
+    pub fn from_f32(
+        dims: &[usize],
+        weights: &[Vec<f32>],
+        biases: &[Vec<f32>],
+        hidden_act: Act,
+    ) -> Result<Self, String> {
+        if dims.len() < 2 || weights.len() != dims.len() - 1 || biases.len() != dims.len() - 1 {
+            return Err("need dims.len() - 1 weight and bias tensors".into());
+        }
+        let mut layers = Vec::new();
+        for i in 0..dims.len() - 1 {
+            let (k, n) = (dims[i], dims[i + 1]);
+            if weights[i].len() != n * k {
+                return Err(format!("layer {i}: expected {} weights", n * k));
+            }
+            let (w, scale) = quantize_absmean(&weights[i], n, k, true);
+            let act = if i + 2 == dims.len() {
+                Act::Identity
+            } else {
+                hidden_act
+            };
+            layers.push(MlpLayer {
+                n,
+                k,
+                w,
+                scale,
+                bias: biases[i].clone(),
+                act,
+            });
+        }
+        let m = Self { layers };
+        m.validate()?;
+        Ok(m)
+    }
+
+    /// A random model for tests and benchmarks (synthetic, not trained).
+    pub fn random(dims: &[usize], hidden_act: Act, seed: u64) -> Result<Self, String> {
+        let mut rng = StdRng::seed_from_u64(seed);
+        let mut ws = Vec::new();
+        let mut bs = Vec::new();
+        for i in 0..dims.len() - 1 {
+            let (k, n) = (dims[i], dims[i + 1]);
+            let a = 1.0 / (k as f32).sqrt();
+            ws.push((0..n * k).map(|_| rng.random_range(-a..a)).collect());
+            bs.push((0..n).map(|_| rng.random_range(-0.1f32..0.1)).collect());
+        }
+        Self::from_f32(dims, &ws, &bs, hidden_act)
+    }
+
+    pub fn in_dim(&self) -> usize {
+        self.layers[0].k
+    }
+    pub fn out_dim(&self) -> usize {
+        self.layers.last().unwrap().n
+    }
+    pub fn max_dim(&self) -> usize {
+        self.layers.iter().map(|l| l.n.max(l.k)).max().unwrap()
+    }
+    /// Packed weight bytes (2 bits per weight) + scales and biases.
+    pub fn weight_bytes(&self) -> usize {
+        self.layers.iter().map(|l| l.n * l.k / 4 + 8 * l.n).sum()
+    }
+
+    /// Scalar reference forward pass for one sample (allocates; this is the oracle).
+    pub fn forward_reference(&self, x: &[f32]) -> Vec<f32> {
+        assert_eq!(x.len(), self.in_dim());
+        let mut cur = x.to_vec();
+        for l in &self.layers {
+            let mut q = vec![0i8; l.k];
+            let (s, _sum) = quantize_into(&cur, &mut q);
+            let mut out = vec![0f32; l.n];
+            for r in 0..l.n {
+                let mut acc = 0i32;
+                for c in 0..l.k {
+                    acc += l.w[r * l.k + c] as i32 * q[c] as i32;
+                }
+                let v = (acc as f32 / s) * l.scale[r] + l.bias[r];
+                out[r] = act(v, l.act);
+            }
+            cur = out;
+        }
+        cur
+    }
+}
+
+/// `sum(c[i] * q[i])` with codes `c = w + 1` in {0,1,2}. Callers subtract `sum(q)`.
+#[inline(always)]
+fn dot_codes_generic(c: &[u8], q: &[i8]) -> i32 {
+    let mut acc = [0i32; 16];
+    let mut cc = c.chunks_exact(16);
+    let mut qc = q.chunks_exact(16);
+    for (x, y) in (&mut cc).zip(&mut qc) {
+        for i in 0..16 {
+            acc[i] += x[i] as i32 * y[i] as i32;
+        }
+    }
+    let mut s: i32 = acc.iter().sum();
+    for (x, y) in cc.remainder().iter().zip(qc.remainder()) {
+        s += *x as i32 * *y as i32;
+    }
+    s
+}
+
+/// AVX2: `vpmaddubsw` (u8 codes x i8 activations -> i16 pairs, at most 2*2*128 so no saturation)
+/// then `vpmaddwd` with ones -> i32. 32 multiply-adds per instruction pair.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn dot_codes_avx2(c: &[u8], q: &[i8]) -> i32 {
+    use std::arch::x86_64::*;
+    let n = c.len().min(q.len());
+    let ones = _mm256_set1_epi16(1);
+    let mut acc0 = _mm256_setzero_si256();
+    let mut acc1 = _mm256_setzero_si256();
+    let mut i = 0;
+    while i + 64 <= n {
+        let c0 = _mm256_loadu_si256(c.as_ptr().add(i) as *const __m256i);
+        let q0 = _mm256_loadu_si256(q.as_ptr().add(i) as *const __m256i);
+        let c1 = _mm256_loadu_si256(c.as_ptr().add(i + 32) as *const __m256i);
+        let q1 = _mm256_loadu_si256(q.as_ptr().add(i + 32) as *const __m256i);
+        acc0 = _mm256_add_epi32(acc0, _mm256_madd_epi16(_mm256_maddubs_epi16(c0, q0), ones));
+        acc1 = _mm256_add_epi32(acc1, _mm256_madd_epi16(_mm256_maddubs_epi16(c1, q1), ones));
+        i += 64;
+    }
+    while i + 32 <= n {
+        let c0 = _mm256_loadu_si256(c.as_ptr().add(i) as *const __m256i);
+        let q0 = _mm256_loadu_si256(q.as_ptr().add(i) as *const __m256i);
+        acc0 = _mm256_add_epi32(acc0, _mm256_madd_epi16(_mm256_maddubs_epi16(c0, q0), ones));
+        i += 32;
+    }
+    let v = _mm256_add_epi32(acc0, acc1);
+    let h = _mm_add_epi32(_mm256_castsi256_si128(v), _mm256_extracti128_si256(v, 1));
+    let h = _mm_add_epi32(h, _mm_shuffle_epi32(h, 0b01_00_11_10));
+    let h = _mm_add_epi32(h, _mm_shuffle_epi32(h, 0b10_11_00_01));
+    let mut s = _mm_cvtsi128_si32(h);
+    while i < n {
+        s += c[i] as i32 * q[i] as i32;
+        i += 1;
+    }
+    s
+}
+
+/// Four rows at once against the same activations: each activation load is reused 4x.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn dot_codes4_avx2(c: [&[u8]; 4], q: &[i8]) -> [i32; 4] {
+    use std::arch::x86_64::*;
+    let n = q.len();
+    let ones = _mm256_set1_epi16(1);
+    let mut acc = [_mm256_setzero_si256(); 4];
+    let mut i = 0;
+    while i + 32 <= n {
+        let qv = _mm256_loadu_si256(q.as_ptr().add(i) as *const __m256i);
+        for r in 0..4 {
+            let cv = _mm256_loadu_si256(c[r].as_ptr().add(i) as *const __m256i);
+            acc[r] = _mm256_add_epi32(
+                acc[r],
+                _mm256_madd_epi16(_mm256_maddubs_epi16(cv, qv), ones),
+            );
+        }
+        i += 32;
+    }
+    // Horizontal sums of the four accumulators in one go.
+    let a01 = _mm256_hadd_epi32(acc[0], acc[1]);
+    let a23 = _mm256_hadd_epi32(acc[2], acc[3]);
+    let a = _mm256_hadd_epi32(a01, a23); // [r0 r1 r2 r3 | r0 r1 r2 r3] partials
+    let h = _mm_add_epi32(_mm256_castsi256_si128(a), _mm256_extracti128_si256(a, 1));
+    let mut out = [0i32; 4];
+    _mm_storeu_si128(out.as_mut_ptr() as *mut __m128i, h);
+    while i < n {
+        for r in 0..4 {
+            out[r] += c[r][i] as i32 * q[i] as i32;
+        }
+        i += 1;
+    }
+    out
+}
+
+#[inline]
+fn dot_codes(avx2: bool, c: &[u8], q: &[i8]) -> i32 {
+    #[cfg(target_arch = "x86_64")]
+    if avx2 {
+        // SAFETY: callers only pass `avx2 = true` after runtime detection.
+        return unsafe { dot_codes_avx2(c, q) };
+    }
+    let _ = avx2;
+    dot_codes_generic(c, q)
+}
+
+#[inline(always)]
+fn dot_f32_generic(a: &[f32], b: &[f32]) -> f32 {
+    let mut acc = [0f32; 16];
+    let mut ac = a.chunks_exact(16);
+    let mut bc = b.chunks_exact(16);
+    for (x, y) in (&mut ac).zip(&mut bc) {
+        for i in 0..16 {
+            acc[i] += x[i] * y[i];
+        }
+    }
+    let mut s: f32 = acc.iter().sum();
+    for (x, y) in ac.remainder().iter().zip(bc.remainder()) {
+        s += x * y;
+    }
+    s
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+unsafe fn dot_f32_avx2(a: &[f32], b: &[f32]) -> f32 {
+    use std::arch::x86_64::*;
+    let n = a.len().min(b.len());
+    let mut acc = [_mm256_setzero_ps(); 4];
+    let mut i = 0;
+    while i + 32 <= n {
+        for j in 0..4 {
+            let x = _mm256_loadu_ps(a.as_ptr().add(i + 8 * j));
+            let y = _mm256_loadu_ps(b.as_ptr().add(i + 8 * j));
+            acc[j] = _mm256_fmadd_ps(x, y, acc[j]);
+        }
+        i += 32;
+    }
+    while i + 8 <= n {
+        acc[0] = _mm256_fmadd_ps(
+            _mm256_loadu_ps(a.as_ptr().add(i)),
+            _mm256_loadu_ps(b.as_ptr().add(i)),
+            acc[0],
+        );
+        i += 8;
+    }
+    let v = _mm256_add_ps(_mm256_add_ps(acc[0], acc[1]), _mm256_add_ps(acc[2], acc[3]));
+    let h = _mm_add_ps(_mm256_castps256_ps128(v), _mm256_extractf128_ps(v, 1));
+    let h = _mm_add_ps(h, _mm_movehl_ps(h, h));
+    let h = _mm_add_ss(h, _mm_shuffle_ps(h, h, 1));
+    let mut s = _mm_cvtss_f32(h);
+    while i < n {
+        s += a[i] * b[i];
+        i += 1;
+    }
+    s
+}
+
+#[inline]
+fn dot_f32(avx2: bool, a: &[f32], b: &[f32]) -> f32 {
+    #[cfg(target_arch = "x86_64")]
+    if avx2 {
+        // SAFETY: callers only pass `avx2 = true` after runtime detection of AVX2 + FMA.
+        return unsafe { dot_f32_avx2(a, b) };
+    }
+    let _ = avx2;
+    dot_f32_generic(a, b)
+}
+
+/// Which SIMD path the CPU engines use.
+pub fn cpu_simd_level() -> &'static str {
+    #[cfg(target_arch = "x86_64")]
+    if std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma") {
+        return "avx2";
+    }
+    "portable (autovectorized baseline ISA)"
+}
+
+/// Allocation-free CPU inference for a [`TernaryMlp`]. Bit-identical to the reference.
+pub struct CpuEngine {
+    model: TernaryMlp,
+    /// Per layer, codes `w + 1` row-major `[n][k]` as u8 (one byte per weight; small models fit
+    /// in L1/L2 either way, and bytes feed `vpmaddubsw` directly).
+    codes: Vec<Vec<u8>>,
+    bufs: [Vec<f32>; 2],
+    q: Vec<i8>,
+    avx2: bool,
+}
+
+impl CpuEngine {
+    pub fn new(model: &TernaryMlp) -> Result<Self, String> {
+        model.validate()?;
+        let d = model.max_dim();
+        #[cfg(target_arch = "x86_64")]
+        let avx2 = std::is_x86_feature_detected!("avx2");
+        #[cfg(not(target_arch = "x86_64"))]
+        let avx2 = false;
+        let codes = model
+            .layers
+            .iter()
+            .map(|l| l.w.iter().map(|&v| (v + 1) as u8).collect())
+            .collect();
+        Ok(Self {
+            model: model.clone(),
+            codes,
+            bufs: [vec![0.0; d], vec![0.0; d]],
+            q: vec![0; d],
+            avx2,
+        })
+    }
+
+    /// `x: [in_dim]` -> `out: [out_dim]`. No heap allocation.
+    pub fn forward_into(&mut self, x: &[f32], out: &mut [f32]) {
+        assert_eq!(x.len(), self.model.in_dim());
+        assert_eq!(out.len(), self.model.out_dim());
+        let [b0, b1] = &mut self.bufs;
+        let (mut cur, mut nxt) = (b0, b1);
+        cur[..x.len()].copy_from_slice(x);
+        let nl = self.model.layers.len();
+        for (li, l) in self.model.layers.iter().enumerate() {
+            let q = &mut self.q[..l.k];
+            let (s, sum_q) = quantize_into(&cur[..l.k], q);
+            let codes = &self.codes[li];
+            let q = &self.q[..l.k];
+            let dst: &mut [f32] = if li + 1 == nl {
+                &mut *out
+            } else {
+                &mut nxt[..l.n]
+            };
+            let row = |r: usize| &codes[r * l.k..(r + 1) * l.k];
+            let mut r0 = 0;
+            #[cfg(target_arch = "x86_64")]
+            if self.avx2 {
+                while r0 + 4 <= l.n {
+                    // SAFETY: AVX2 detected at construction.
+                    let a = unsafe {
+                        dot_codes4_avx2([row(r0), row(r0 + 1), row(r0 + 2), row(r0 + 3)], q)
+                    };
+                    for j in 0..4 {
+                        let r = r0 + j;
+                        dst[r] = act(((a[j] - sum_q) as f32 / s) * l.scale[r] + l.bias[r], l.act);
+                    }
+                    r0 += 4;
+                }
+            }
+            for r in r0..l.n {
+                let acc = dot_codes(self.avx2, row(r), q) - sum_q;
+                dst[r] = act((acc as f32 / s) * l.scale[r] + l.bias[r], l.act);
+            }
+            std::mem::swap(&mut cur, &mut nxt);
+        }
+    }
+
+    pub fn model(&self) -> &TernaryMlp {
+        &self.model
+    }
+}
+
+/// Same architecture with dense f32 weights (the dequantized ternary weights), plain CPU baseline.
+/// One dense layer: (n, k, weights `[n][k]`, bias, activation).
+type DenseLayer = (usize, usize, Vec<f32>, Vec<f32>, Act);
+
+pub struct DenseF32Mlp {
+    layers: Vec<DenseLayer>,
+    bufs: [Vec<f32>; 2],
+    avx2: bool,
+}
+
+impl DenseF32Mlp {
+    pub fn new(model: &TernaryMlp) -> Self {
+        let layers = model
+            .layers
+            .iter()
+            .map(|l| {
+                let w = (0..l.n * l.k)
+                    .map(|i| l.w[i] as f32 * l.scale[i / l.k])
+                    .collect();
+                (l.n, l.k, w, l.bias.clone(), l.act)
+            })
+            .collect();
+        let d = model.max_dim();
+        #[cfg(target_arch = "x86_64")]
+        let avx2 = std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma");
+        #[cfg(not(target_arch = "x86_64"))]
+        let avx2 = false;
+        Self {
+            layers,
+            bufs: [vec![0.0; d], vec![0.0; d]],
+            avx2,
+        }
+    }
+
+    /// No heap allocation.
+    pub fn forward_into(&mut self, x: &[f32], out: &mut [f32]) {
+        let [b0, b1] = &mut self.bufs;
+        let (mut cur, mut nxt) = (b0, b1);
+        cur[..x.len()].copy_from_slice(x);
+        let nl = self.layers.len();
+        for (li, (n, k, w, b, a)) in self.layers.iter().enumerate() {
+            let dst: &mut [f32] = if li + 1 == nl {
+                &mut *out
+            } else {
+                &mut nxt[..*n]
+            };
+            for r in 0..*n {
+                let row = &w[r * k..(r + 1) * k];
+                let d = dot_f32(self.avx2, row, &cur[..*k]);
+                dst[r] = act(d + b[r], *a);
+            }
+            std::mem::swap(&mut cur, &mut nxt);
+        }
+    }
+}

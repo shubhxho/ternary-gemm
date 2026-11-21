@@ -77,4 +77,11 @@ if CHARTS=$($PY scripts/plot_results.py "$STEM.csv"); then
 else
   echo "(chart generation failed; the Markdown and CSV results are still in results/)"
 fi
-say "Done. Report: $OUT (+ $STEM.csv, charts results/*.png)"
+say "Signal-model latency (batch 1, host -> signal -> host) -> $STEM-latency.md"
+PIN=(); command -v taskset >/dev/null && PIN=(taskset -c "${PIN_CORE:-2}")
+"${PIN[@]}" ./target/release/latency --csv "$STEM-latency.csv" ${LATENCY_ARGS:-} | tee "$STEM-latency.md"
+if LCHARTS=$($PY scripts/plot_latency.py "$STEM-latency.csv"); then
+  { echo; echo "## Charts (measured)"; echo; for c in $LCHARTS; do echo "![]($(basename "$c"))"; done; } >> "$STEM-latency.md"
+  echo "$LCHARTS"
+fi
+say "Done. Reports: $OUT and $STEM-latency.md (+ CSVs, charts results/*.png)"
