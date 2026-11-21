@@ -1,0 +1,269 @@
+NVRTC compute_80: OK in 4.4s, 51 kernels, PTX -> target/ptx/ternary_compute_80.ptx
+  sm_80 fill_f32                     Used 14 registers, used 0 barriers, 372 bytes cmem[0]
+  sm_80 fill_f16                     Used 11 registers, used 0 barriers, 372 bytes cmem[0]
+  sm_80 fill_ternary_codes           Used 12 registers, used 0 barriers, 372 bytes cmem[0]
+  sm_80 naive_f16                    Used 28 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_80 naive_i8                     Used 29 registers, used 0 barriers, 412 bytes cmem[0]
+  sm_80 ternary_f16_b16_r4           Used 168 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_80 ternary_i8_fused_b16_r4      Used 160 registers, used 1 barriers, 384 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_80 ternary_i8_b16_r4            Used 162 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_80 ternary_f16_b16_r2           Used 126 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_80 ternary_i8_fused_b16_r2      Used 98 registers, used 1 barriers, 384 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_80 ternary_i8_b16_r2            Used 124 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_80 ternary_f16_b16_r1           Used 60 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_80 ternary_i8_fused_b16_r1      Used 64 registers, used 1 barriers, 384 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_80 ternary_i8_b16_r1            Used 64 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_80 ternary_f16_b8_r4            Used 128 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_80 ternary_i8_fused_b8_r4       Used 126 registers, used 1 barriers, 320 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_80 ternary_i8_b8_r4             Used 124 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_80 ternary_f16_b8_r2            Used 78 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_80 ternary_i8_fused_b8_r2       Used 56 registers, used 1 barriers, 320 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_80 ternary_i8_b8_r2             Used 60 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_80 ternary_f16_b8_r1            Used 48 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_80 ternary_i8_fused_b8_r1       Used 48 registers, used 1 barriers, 320 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_80 ternary_i8_b8_r1             Used 48 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_80 ternary_f16_b4_r4            Used 123 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_80 ternary_i8_fused_b4_r4       Used 58 registers, used 1 barriers, 288 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_80 ternary_i8_b4_r4             Used 64 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_80 ternary_f16_b4_r2            SPILL: 16 bytes stack frame, 24 bytes spill stores, 24 bytes spill loads
+  sm_80 ternary_f16_b4_r2            Used 64 registers, used 0 barriers, 16 bytes cumulative stack size, 404 bytes cmem[0]
+  sm_80 ternary_i8_fused_b4_r2       Used 64 registers, used 1 barriers, 288 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_80 ternary_i8_b4_r2             Used 74 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_80 ternary_f16_b4_r1            Used 46 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_80 ternary_i8_fused_b4_r1       Used 47 registers, used 1 barriers, 288 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_80 ternary_i8_b4_r1             Used 48 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_80 ternary_f16_b2_r4            Used 121 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_80 ternary_i8_fused_b2_r4       Used 60 registers, used 1 barriers, 272 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_80 ternary_i8_b2_r4             Used 64 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_80 ternary_f16_b2_r2            Used 64 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_80 ternary_i8_fused_b2_r2       SPILL: 8 bytes stack frame, 8 bytes spill stores, 32 bytes spill loads
+  sm_80 ternary_i8_fused_b2_r2       Used 32 registers, used 1 barriers, 8 bytes cumulative stack size, 272 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_80 ternary_i8_b2_r2             Used 44 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_80 ternary_f16_b2_r1            Used 48 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_80 ternary_i8_fused_b2_r1       Used 40 registers, used 1 barriers, 272 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_80 ternary_i8_b2_r1             Used 48 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_80 ternary_f16_b1_r4            Used 88 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_80 ternary_i8_fused_b1_r4       Used 48 registers, used 1 barriers, 272 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_80 ternary_i8_b1_r4             Used 63 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_80 ternary_f16_b1_r2            Used 48 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_80 ternary_i8_fused_b1_r2       Used 32 registers, used 1 barriers, 272 bytes smem, 420 bytes cmem[0], 24 bytes cmem[2]
+  sm_80 ternary_i8_b1_r2             Used 40 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_80 ternary_f16_b1_r1            Used 40 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_80 ternary_i8_fused_b1_r1       Used 31 registers, used 1 barriers, 272 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_80 ternary_i8_b1_r1             Used 32 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_80 quantize_i8                  Used 26 registers, used 1 barriers, 256 bytes smem, 400 bytes cmem[0], 8 bytes cmem[2]
+  sm_80: ptxas OK, 2 kernels with register spills
+NVRTC compute_86: OK in 4.3s, 51 kernels, PTX -> target/ptx/ternary_compute_86.ptx
+  sm_86 fill_f32                     Used 14 registers, used 0 barriers, 372 bytes cmem[0]
+  sm_86 fill_f16                     Used 10 registers, used 0 barriers, 372 bytes cmem[0]
+  sm_86 fill_ternary_codes           Used 12 registers, used 0 barriers, 372 bytes cmem[0]
+  sm_86 naive_f16                    Used 27 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_86 naive_i8                     Used 26 registers, used 0 barriers, 412 bytes cmem[0]
+  sm_86 ternary_f16_b16_r4           Used 168 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_86 ternary_i8_fused_b16_r4      Used 188 registers, used 1 barriers, 384 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_86 ternary_i8_b16_r4            Used 212 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_86 ternary_f16_b16_r2           Used 121 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_86 ternary_i8_fused_b16_r2      Used 104 registers, used 1 barriers, 384 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_86 ternary_i8_b16_r2            Used 124 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_86 ternary_f16_b16_r1           Used 58 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_86 ternary_i8_fused_b16_r1      Used 64 registers, used 1 barriers, 384 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_86 ternary_i8_b16_r1            Used 64 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_86 ternary_f16_b8_r4            Used 128 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_86 ternary_i8_fused_b8_r4       Used 128 registers, used 1 barriers, 320 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_86 ternary_i8_b8_r4             Used 124 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_86 ternary_f16_b8_r2            Used 80 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_86 ternary_i8_fused_b8_r2       Used 56 registers, used 1 barriers, 320 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_86 ternary_i8_b8_r2             Used 60 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_86 ternary_f16_b8_r1            Used 48 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_86 ternary_i8_fused_b8_r1       Used 48 registers, used 1 barriers, 320 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_86 ternary_i8_b8_r1             Used 48 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_86 ternary_f16_b4_r4            Used 128 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_86 ternary_i8_fused_b4_r4       Used 58 registers, used 1 barriers, 288 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_86 ternary_i8_b4_r4             Used 64 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_86 ternary_f16_b4_r2            SPILL: 16 bytes stack frame, 24 bytes spill stores, 24 bytes spill loads
+  sm_86 ternary_f16_b4_r2            Used 64 registers, used 0 barriers, 16 bytes cumulative stack size, 404 bytes cmem[0]
+  sm_86 ternary_i8_fused_b4_r2       Used 64 registers, used 1 barriers, 288 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_86 ternary_i8_b4_r2             Used 72 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_86 ternary_f16_b4_r1            Used 48 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_86 ternary_i8_fused_b4_r1       Used 47 registers, used 1 barriers, 288 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_86 ternary_i8_b4_r1             Used 48 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_86 ternary_f16_b2_r4            Used 123 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_86 ternary_i8_fused_b2_r4       Used 60 registers, used 1 barriers, 272 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_86 ternary_i8_b2_r4             Used 64 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_86 ternary_f16_b2_r2            Used 64 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_86 ternary_i8_fused_b2_r2       Used 40 registers, used 1 barriers, 272 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_86 ternary_i8_b2_r2             Used 40 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_86 ternary_f16_b2_r1            Used 48 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_86 ternary_i8_fused_b2_r1       Used 40 registers, used 1 barriers, 272 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_86 ternary_i8_b2_r1             Used 48 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_86 ternary_f16_b1_r4            Used 90 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_86 ternary_i8_fused_b1_r4       Used 48 registers, used 1 barriers, 272 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_86 ternary_i8_b1_r4             Used 63 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_86 ternary_f16_b1_r2            Used 48 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_86 ternary_i8_fused_b1_r2       Used 36 registers, used 1 barriers, 272 bytes smem, 420 bytes cmem[0], 24 bytes cmem[2]
+  sm_86 ternary_i8_b1_r2             Used 40 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_86 ternary_f16_b1_r1            Used 40 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_86 ternary_i8_fused_b1_r1       Used 34 registers, used 1 barriers, 272 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_86 ternary_i8_b1_r1             Used 38 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_86 quantize_i8                  Used 27 registers, used 1 barriers, 256 bytes smem, 400 bytes cmem[0], 8 bytes cmem[2]
+  sm_86: ptxas OK, 1 kernels with register spills
+NVRTC compute_89: OK in 4.3s, 51 kernels, PTX -> target/ptx/ternary_compute_89.ptx
+  sm_89 fill_f32                     Used 14 registers, used 0 barriers, 372 bytes cmem[0]
+  sm_89 fill_f16                     Used 10 registers, used 0 barriers, 372 bytes cmem[0]
+  sm_89 fill_ternary_codes           Used 12 registers, used 0 barriers, 372 bytes cmem[0]
+  sm_89 naive_f16                    Used 27 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_89 naive_i8                     Used 26 registers, used 0 barriers, 412 bytes cmem[0]
+  sm_89 ternary_f16_b16_r4           Used 168 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_89 ternary_i8_fused_b16_r4      Used 188 registers, used 1 barriers, 384 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_89 ternary_i8_b16_r4            Used 212 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_89 ternary_f16_b16_r2           Used 121 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_89 ternary_i8_fused_b16_r2      Used 104 registers, used 1 barriers, 384 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_89 ternary_i8_b16_r2            Used 124 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_89 ternary_f16_b16_r1           Used 58 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_89 ternary_i8_fused_b16_r1      Used 64 registers, used 1 barriers, 384 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_89 ternary_i8_b16_r1            Used 64 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_89 ternary_f16_b8_r4            Used 128 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_89 ternary_i8_fused_b8_r4       Used 128 registers, used 1 barriers, 320 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_89 ternary_i8_b8_r4             Used 124 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_89 ternary_f16_b8_r2            Used 80 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_89 ternary_i8_fused_b8_r2       Used 56 registers, used 1 barriers, 320 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_89 ternary_i8_b8_r2             Used 60 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_89 ternary_f16_b8_r1            Used 48 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_89 ternary_i8_fused_b8_r1       Used 48 registers, used 1 barriers, 320 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_89 ternary_i8_b8_r1             Used 48 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_89 ternary_f16_b4_r4            Used 128 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_89 ternary_i8_fused_b4_r4       Used 58 registers, used 1 barriers, 288 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_89 ternary_i8_b4_r4             Used 64 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_89 ternary_f16_b4_r2            SPILL: 16 bytes stack frame, 24 bytes spill stores, 24 bytes spill loads
+  sm_89 ternary_f16_b4_r2            Used 64 registers, used 0 barriers, 16 bytes cumulative stack size, 404 bytes cmem[0]
+  sm_89 ternary_i8_fused_b4_r2       Used 64 registers, used 1 barriers, 288 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_89 ternary_i8_b4_r2             Used 72 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_89 ternary_f16_b4_r1            Used 48 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_89 ternary_i8_fused_b4_r1       Used 47 registers, used 1 barriers, 288 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_89 ternary_i8_b4_r1             Used 48 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_89 ternary_f16_b2_r4            Used 123 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_89 ternary_i8_fused_b2_r4       Used 60 registers, used 1 barriers, 272 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_89 ternary_i8_b2_r4             Used 64 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_89 ternary_f16_b2_r2            Used 64 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_89 ternary_i8_fused_b2_r2       Used 40 registers, used 1 barriers, 272 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_89 ternary_i8_b2_r2             Used 40 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_89 ternary_f16_b2_r1            Used 48 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_89 ternary_i8_fused_b2_r1       Used 40 registers, used 1 barriers, 272 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_89 ternary_i8_b2_r1             Used 48 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_89 ternary_f16_b1_r4            Used 90 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_89 ternary_i8_fused_b1_r4       Used 48 registers, used 1 barriers, 272 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_89 ternary_i8_b1_r4             Used 63 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_89 ternary_f16_b1_r2            Used 48 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_89 ternary_i8_fused_b1_r2       Used 36 registers, used 1 barriers, 272 bytes smem, 420 bytes cmem[0], 24 bytes cmem[2]
+  sm_89 ternary_i8_b1_r2             Used 40 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_89 ternary_f16_b1_r1            Used 40 registers, used 0 barriers, 404 bytes cmem[0]
+  sm_89 ternary_i8_fused_b1_r1       Used 34 registers, used 1 barriers, 272 bytes smem, 420 bytes cmem[0], 8 bytes cmem[2]
+  sm_89 ternary_i8_b1_r1             Used 38 registers, used 0 barriers, 420 bytes cmem[0]
+  sm_89 quantize_i8                  Used 27 registers, used 1 barriers, 256 bytes smem, 400 bytes cmem[0], 8 bytes cmem[2]
+  sm_89: ptxas OK, 1 kernels with register spills
+NVRTC compute_90: OK in 4.2s, 51 kernels, PTX -> target/ptx/ternary_compute_90.ptx
+  sm_90 fill_f32                     Used 13 registers, used 0 barriers
+  sm_90 fill_f16                     Used 13 registers, used 0 barriers
+  sm_90 fill_ternary_codes           Used 13 registers, used 0 barriers
+  sm_90 naive_f16                    Used 30 registers, used 0 barriers
+  sm_90 naive_i8                     Used 30 registers, used 0 barriers
+  sm_90 ternary_f16_b16_r4           Used 172 registers, used 0 barriers
+  sm_90 ternary_i8_fused_b16_r4      Used 190 registers, used 1 barriers, 384 bytes smem
+  sm_90 ternary_i8_b16_r4            Used 214 registers, used 0 barriers
+  sm_90 ternary_f16_b16_r2           Used 126 registers, used 0 barriers
+  sm_90 ternary_i8_fused_b16_r2      Used 106 registers, used 1 barriers, 384 bytes smem
+  sm_90 ternary_i8_b16_r2            Used 126 registers, used 0 barriers
+  sm_90 ternary_f16_b16_r1           Used 64 registers, used 0 barriers
+  sm_90 ternary_i8_fused_b16_r1      Used 61 registers, used 1 barriers, 384 bytes smem
+  sm_90 ternary_i8_b16_r1            Used 62 registers, used 0 barriers
+  sm_90 ternary_f16_b8_r4            Used 128 registers, used 0 barriers
+  sm_90 ternary_i8_fused_b8_r4       Used 128 registers, used 1 barriers, 320 bytes smem
+  sm_90 ternary_i8_b8_r4             Used 122 registers, used 0 barriers
+  sm_90 ternary_f16_b8_r2            Used 80 registers, used 0 barriers
+  sm_90 ternary_i8_fused_b8_r2       Used 56 registers, used 1 barriers, 320 bytes smem
+  sm_90 ternary_i8_b8_r2             Used 58 registers, used 0 barriers
+  sm_90 ternary_f16_b8_r1            Used 56 registers, used 0 barriers
+  sm_90 ternary_i8_fused_b8_r1       Used 48 registers, used 1 barriers, 320 bytes smem
+  sm_90 ternary_i8_b8_r1             Used 48 registers, used 0 barriers
+  sm_90 ternary_f16_b4_r4            Used 128 registers, used 0 barriers
+  sm_90 ternary_i8_fused_b4_r4       Used 61 registers, used 1 barriers, 288 bytes smem
+  sm_90 ternary_i8_b4_r4             Used 64 registers, used 0 barriers
+  sm_90 ternary_f16_b4_r2            Used 74 registers, used 0 barriers
+  sm_90 ternary_i8_fused_b4_r2       Used 64 registers, used 1 barriers, 288 bytes smem
+  sm_90 ternary_i8_b4_r2             Used 72 registers, used 0 barriers
+  sm_90 ternary_f16_b4_r1            Used 48 registers, used 0 barriers
+  sm_90 ternary_i8_fused_b4_r1       Used 47 registers, used 1 barriers, 288 bytes smem
+  sm_90 ternary_i8_b4_r1             Used 48 registers, used 0 barriers
+  sm_90 ternary_f16_b2_r4            Used 126 registers, used 0 barriers
+  sm_90 ternary_i8_fused_b2_r4       Used 60 registers, used 1 barriers, 272 bytes smem
+  sm_90 ternary_i8_b2_r4             Used 64 registers, used 0 barriers
+  sm_90 ternary_f16_b2_r2            Used 74 registers, used 0 barriers
+  sm_90 ternary_i8_fused_b2_r2       Used 40 registers, used 1 barriers, 272 bytes smem
+  sm_90 ternary_i8_b2_r2             Used 40 registers, used 0 barriers
+  sm_90 ternary_f16_b2_r1            Used 60 registers, used 0 barriers
+  sm_90 ternary_i8_fused_b2_r1       Used 40 registers, used 1 barriers, 272 bytes smem
+  sm_90 ternary_i8_b2_r1             Used 48 registers, used 0 barriers
+  sm_90 ternary_f16_b1_r4            Used 92 registers, used 0 barriers
+  sm_90 ternary_i8_fused_b1_r4       Used 48 registers, used 1 barriers, 272 bytes smem
+  sm_90 ternary_i8_b1_r4             Used 63 registers, used 0 barriers
+  sm_90 ternary_f16_b1_r2            Used 48 registers, used 0 barriers
+  sm_90 ternary_i8_fused_b1_r2       Used 32 registers, used 1 barriers, 272 bytes smem
+  sm_90 ternary_i8_b1_r2             Used 40 registers, used 0 barriers
+  sm_90 ternary_f16_b1_r1            Used 40 registers, used 0 barriers
+  sm_90 ternary_i8_fused_b1_r1       Used 31 registers, used 1 barriers, 272 bytes smem
+  sm_90 ternary_i8_b1_r1             Used 32 registers, used 0 barriers
+  sm_90 quantize_i8                  Used 28 registers, used 1 barriers, 256 bytes smem
+  sm_90: ptxas OK, 0 kernels with register spills
+NVRTC compute_120: OK in 4.6s, 51 kernels, PTX -> target/ptx/ternary_compute_120.ptx
+  sm_120 fill_f32                     Used 16 registers, used 0 barriers
+  sm_120 fill_f16                     Used 14 registers, used 0 barriers
+  sm_120 fill_ternary_codes           Used 16 registers, used 0 barriers
+  sm_120 naive_f16                    Used 31 registers, used 0 barriers
+  sm_120 naive_i8                     Used 31 registers, used 0 barriers
+  sm_120 ternary_f16_b16_r4           Used 172 registers, used 0 barriers
+  sm_120 ternary_i8_fused_b16_r4      Used 164 registers, used 1 barriers, 384 bytes smem
+  sm_120 ternary_i8_b16_r4            Used 204 registers, used 0 barriers
+  sm_120 ternary_f16_b16_r2           Used 128 registers, used 0 barriers
+  sm_120 ternary_i8_fused_b16_r2      Used 122 registers, used 1 barriers, 384 bytes smem
+  sm_120 ternary_i8_b16_r2            Used 108 registers, used 0 barriers
+  sm_120 ternary_f16_b16_r1           Used 60 registers, used 0 barriers
+  sm_120 ternary_i8_fused_b16_r1      Used 58 registers, used 1 barriers, 384 bytes smem
+  sm_120 ternary_i8_b16_r1            Used 62 registers, used 0 barriers
+  sm_120 ternary_f16_b8_r4            Used 166 registers, used 0 barriers
+  sm_120 ternary_i8_fused_b8_r4       Used 128 registers, used 1 barriers, 320 bytes smem
+  sm_120 ternary_i8_b8_r4             Used 128 registers, used 0 barriers
+  sm_120 ternary_f16_b8_r2            Used 80 registers, used 0 barriers
+  sm_120 ternary_i8_fused_b8_r2       Used 76 registers, used 1 barriers, 320 bytes smem
+  sm_120 ternary_i8_b8_r2             Used 80 registers, used 0 barriers
+  sm_120 ternary_f16_b8_r1            Used 48 registers, used 0 barriers
+  sm_120 ternary_i8_fused_b8_r1       Used 48 registers, used 1 barriers, 320 bytes smem
+  sm_120 ternary_i8_b8_r1             Used 52 registers, used 0 barriers
+  sm_120 ternary_f16_b4_r4            Used 126 registers, used 0 barriers
+  sm_120 ternary_i8_fused_b4_r4       Used 122 registers, used 1 barriers, 288 bytes smem
+  sm_120 ternary_i8_b4_r4             Used 124 registers, used 0 barriers
+  sm_120 ternary_f16_b4_r2            Used 78 registers, used 0 barriers
+  sm_120 ternary_i8_fused_b4_r2       Used 64 registers, used 1 barriers, 288 bytes smem
+  sm_120 ternary_i8_b4_r2             Used 66 registers, used 0 barriers
+  sm_120 ternary_f16_b4_r1            Used 46 registers, used 0 barriers
+  sm_120 ternary_i8_fused_b4_r1       Used 40 registers, used 1 barriers, 288 bytes smem
+  sm_120 ternary_i8_b4_r1             Used 48 registers, used 0 barriers
+  sm_120 ternary_f16_b2_r4            Used 126 registers, used 0 barriers
+  sm_120 ternary_i8_fused_b2_r4       Used 97 registers, used 1 barriers, 272 bytes smem
+  sm_120 ternary_i8_b2_r4             Used 98 registers, used 0 barriers
+  sm_120 ternary_f16_b2_r2            Used 64 registers, used 0 barriers
+  sm_120 ternary_i8_fused_b2_r2       Used 64 registers, used 1 barriers, 272 bytes smem
+  sm_120 ternary_i8_b2_r2             Used 66 registers, used 0 barriers
+  sm_120 ternary_f16_b2_r1            Used 46 registers, used 0 barriers
+  sm_120 ternary_i8_fused_b2_r1       Used 48 registers, used 1 barriers, 272 bytes smem
+  sm_120 ternary_i8_b2_r1             Used 44 registers, used 0 barriers
+  sm_120 ternary_f16_b1_r4            Used 89 registers, used 0 barriers
+  sm_120 ternary_i8_fused_b1_r4       Used 48 registers, used 1 barriers, 272 bytes smem
+  sm_120 ternary_i8_b1_r4             Used 48 registers, used 0 barriers
+  sm_120 ternary_f16_b1_r2            Used 58 registers, used 0 barriers
+  sm_120 ternary_i8_fused_b1_r2       Used 40 registers, used 1 barriers, 272 bytes smem
+  sm_120 ternary_i8_b1_r2             Used 40 registers, used 0 barriers
+  sm_120 ternary_f16_b1_r1            Used 39 registers, used 0 barriers
+  sm_120 ternary_i8_fused_b1_r1       Used 40 registers, used 1 barriers, 272 bytes smem
+  sm_120 ternary_i8_b1_r1             Used 38 registers, used 0 barriers
+  sm_120 quantize_i8                  Used 50 registers, used 1 barriers, 256 bytes smem
+  sm_120: ptxas OK, 0 kernels with register spills
