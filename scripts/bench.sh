@@ -50,9 +50,10 @@ TERNARY_REQUIRE_GPU=1 cargo test --release -- --test-threads=1
 
 mkdir -p results
 GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1 | tr ' /' '__')
-OUT="results/$(date +%Y%m%d-%H%M%S)-${GPU_NAME}.md"
+STEM="results/$(date +%Y%m%d-%H%M%S)-${GPU_NAME}"
+OUT="$STEM.md"
 say "Benchmark -> $OUT"
-cargo run --release --bin bench -- "$@" | tee "$OUT"
+cargo run --release --bin bench -- --csv "$STEM.csv" "$@" | tee "$OUT"
 {
   echo
   echo "<details><summary>Environment</summary>"
@@ -64,4 +65,16 @@ cargo run --release --bin bench -- "$@" | tee "$OUT"
   echo '```'
   echo "</details>"
 } >> "$OUT"
-say "Done. Report: $OUT"
+say "Charts from the measured CSV"
+PY=python3
+if ! $PY -c "import matplotlib" 2>/dev/null; then
+  [ -x .venv-plot/bin/python ] || { python3 -m venv .venv-plot && .venv-plot/bin/pip install -q matplotlib; }
+  PY=.venv-plot/bin/python
+fi
+if CHARTS=$($PY scripts/plot_results.py "$STEM.csv"); then
+  { echo; echo "## Charts (measured)"; echo; for c in $CHARTS; do echo "![]($(basename "$c"))"; done; } >> "$OUT"
+  echo "$CHARTS"
+else
+  echo "(chart generation failed; the Markdown and CSV results are still in results/)"
+fi
+say "Done. Report: $OUT (+ $STEM.csv, charts results/*.png)"

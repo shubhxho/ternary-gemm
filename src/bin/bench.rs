@@ -4,15 +4,14 @@
 //! Prints Markdown. Every GPU number printed is measured on the machine running this binary;
 //! sections that are estimates say so explicitly.
 //!
-//! Usage: cargo run --release --bin bench -- [--quick] [--batches 1,4,16] [--layers 30] [--no-verify]
+//! Usage: cargo run --release --bin bench -- [--quick] [--batches 1,4,16] [--layers 30] [--no-verify] [--csv out.csv]
 //! Env:   PEAK_GBPS=448   override the peak DRAM bandwidth used for "% of peak".
 
+use cudarc::driver::CudaSlice;
 use half::f16;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use std::time::Instant;
-use ternary_gemm::gpu::{
-    time_us, Cublas, Gpu, GpuTernary, Launch, Result, FUSED_SMEM_LIMIT, ROWS_PER_WARP,
-};
+use ternary_gemm::gpu::{time_us, Cublas, Gpu, GpuTernary, Launch, Result, ROWS_PER_WARP};
 use ternary_gemm::pack::PackedTernary;
 use ternary_gemm::reference;
 
@@ -45,6 +44,7 @@ struct Opts {
     reps: usize,
     target_ms: f64,
     verify: bool,
+    csv: Option<String>,
 }
 
 fn parse() -> Opts {
@@ -54,6 +54,7 @@ fn parse() -> Opts {
         reps: 9,
         target_ms: 40.0,
         verify: true,
+        csv: None,
     };
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -76,6 +77,10 @@ fn parse() -> Opts {
                 o.layers = args[i].parse().expect("layers");
             }
             "--no-verify" => o.verify = false,
+            "--csv" => {
+                i += 1;
+                o.csv = Some(args[i].clone());
+            }
             other => panic!("unknown argument {other}"),
         }
         i += 1;
@@ -99,10 +104,18 @@ fn copies(g: &Gpu, bytes: usize) -> usize {
     (3 * g.info.l2_bytes).div_ceil(bytes.max(1)).clamp(1, 64)
 }
 
-fn rand_f16(g: &Gpu, len: usize, seed: u32) -> Result<cudarc::driver::CudaSlice<f16>> {
+fn rand_f16(g: &Gpu, len: usize, seed: u32) -> Result<CudaSlice<f16>> {
     let mut b = g.alloc_f16(len)?;
     g.fill_f16(&mut b, seed)?;
     Ok(b)
+}
+
+thread_local! {
+    static CSV: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+/// Record one machine-readable result line (written to `--csv <path>` at the end; used for charts).
+fn csv(line: String) {
+    CSV.with(|c| c.borrow_mut().push(line));
 }
 
 struct Row {
@@ -181,6 +194,10 @@ fn run(g: &Gpu, o: &Opts) -> Result<()> {
         "| Kernels compiled for | {} (NVRTC, driver-JIT to SASS) |",
         info.ptx_arch
     );
+    println!(
+        "| Fused-kernel smem limit | batch x K <= {} B |",
+        info.fused_smem_limit
+    );
     println!("| Timing | CUDA events, median of {} samples, weights rotated through >= 3x L2 so they stream from DRAM |\n", o.reps);
 
     let cublas = Cublas::new(g)?;
@@ -208,12 +225,38 @@ fn run(g: &Gpu, o: &Opts) -> Result<()> {
                     base / r.us,
                     r.note
                 );
+                csv(format!(
+                    "kernel,{n},{k},{label},{batch},{},{:.4},{:.3},{:.3},{:.4}",
+                    r.kernel.replace("**", ""),
+                    r.us,
+                    r.bytes / r.us / 1e3,
+                    100.0 * r.bytes / r.us / 1e3 / peak,
+                    base / r.us
+                ));
             }
         }
     }
     println!();
     layer_stack(g, &cublas, o)?;
     roofline(peak);
+    if let Some(path) = &o.csv {
+        let mut out = String::from("# measured on this GPU by src/bin/bench.rs\n");
+        out += &format!(
+            "# gpu,{},sm_{}{},peak_gbps,{peak:.1}\n",
+            info.name, info.compute_capability.0, info.compute_capability.1
+        );
+        out +=
+            "# kernel,n,k,label,batch,kernel_name,latency_us,eff_gbps,pct_peak,speedup_vs_cublas\n";
+        out += "# layer_stack,batch,path,layers_allocated,step_us,tokens_per_s,speedup_vs_cublas\n";
+        CSV.with(|c| {
+            for l in c.borrow().iter() {
+                out += l;
+                out.push('\n');
+            }
+        });
+        std::fs::write(path, out).expect("write csv");
+        eprintln!("wrote {path}");
+    }
     Ok(())
 }
 
@@ -240,7 +283,7 @@ fn verify(g: &Gpu, rng: &mut StdRng, o: &Opts) -> Result<()> {
                 |v: Vec<f16>| v.iter().zip(&exp).all(|(a, b)| a.to_bits() == b.to_bits());
             g.gemm_i8(&w, &acts, None, &mut out, Launch::default())?;
             let a = bitexact(g.download(&out)?);
-            let b = if batch * k <= FUSED_SMEM_LIMIT {
+            let b = if batch * k <= g.info.fused_smem_limit {
                 g.gemm_i8_fused(&w, &x, batch, None, 1e-5, None, &mut out, Launch::default())?;
                 Some(bitexact(g.download(&out)?))
             } else {
@@ -359,7 +402,7 @@ fn bench_shape(
         note: format!("2 launches, fp16 in -> fp16 out, R={r}"),
     });
 
-    if batch * k <= FUSED_SMEM_LIMIT {
+    if batch * k <= g.info.fused_smem_limit {
         let (t, r) = sweep(&mut |l, i| {
             g.gemm_i8_fused(&tw[i % nt], &x, batch, None, 1e-5, None, &mut out, l)
         })?;
@@ -381,10 +424,56 @@ fn bench_shape(
     Ok(rows)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn tern_step(
+    g: &Gpu,
+    layers: &[Vec<GpuTernary>],
+    x: &CudaSlice<f16>,
+    a2560: &mut ternary_gemm::gpu::GpuActs,
+    a6912: &mut ternary_gemm::gpu::GpuActs,
+    res: &CudaSlice<f16>,
+    y: &mut CudaSlice<f16>,
+) -> Result<()> {
+    let l = Launch::default();
+    for ws in layers {
+        g.quantize(x, None, 1e-5, a2560)?; // attention input, shared by q, k, v
+        for w in &ws[0..3] {
+            g.gemm_i8(w, a2560, None, y, l)?;
+        }
+        g.quantize(x, None, 1e-5, a2560)?; // o-proj input
+        g.gemm_i8(&ws[3], a2560, Some(res), y, l)?;
+        g.quantize(x, None, 1e-5, a2560)?; // ffn input, shared by gate, up
+        g.gemm_i8(&ws[4], a2560, None, y, l)?;
+        g.gemm_i8(&ws[5], a2560, None, y, l)?;
+        g.quantize(x, None, 1e-5, a6912)?; // down-proj input
+        g.gemm_i8(&ws[6], a6912, Some(res), y, l)?;
+    }
+    Ok(())
+}
+
+fn f16_step(
+    cublas: &Cublas,
+    layers: &[Vec<CudaSlice<f16>>],
+    x: &CudaSlice<f16>,
+    y: &mut CudaSlice<f16>,
+    batch: usize,
+) -> Result<()> {
+    for ws in layers {
+        for (j, (n, k)) in BITNET_2B_LAYER.iter().enumerate() {
+            cublas.gemm(&ws[j], x, y, *n, *k, batch)?;
+        }
+    }
+    Ok(())
+}
+
 fn layer_stack(g: &Gpu, cublas: &Cublas, o: &Opts) -> Result<()> {
     println!("## BitNet-b1.58-2B linear-layer stack (decode)\n");
     println!("Per block: q, k, v, o, gate, up, down. Ternary path = 4 activation-quantize launches + 7 W2A8 GEMVs");
     println!("(q/k/v share one quantization, residual add fused into o and down). cuBLAS path = 7 FP16 GEMMs.");
+    println!(
+        "Each path is timed twice: launched op by op from the host, and replayed as one CUDA graph"
+    );
+    println!("(the whole token step captured once, which removes per-launch CPU/driver overhead).");
     println!("**Linear layers only**: attention, RoPE, norms outside the fused prologue, activation function,");
     println!("embeddings and lm_head are NOT included, so this is an upper bound on end-to-end tokens/s.\n");
     let per_layer_tern: usize = BITNET_2B_LAYER.iter().map(|(n, k)| n * k / 4 + n * 4).sum();
@@ -393,10 +482,24 @@ fn layer_stack(g: &Gpu, cublas: &Cublas, o: &Opts) -> Result<()> {
     let budget = (free as f64 * 0.8) as usize;
     let lt = o.layers.min(budget / per_layer_tern).max(1);
     let lf = o.layers.min(budget / per_layer_f16).max(1);
-    println!("| batch | path | layers allocated | time / token step (all {} layers) | linear-only tokens/s | speedup |", o.layers);
+    println!(
+        "| batch | path | layers allocated | time / token step (all {} layers) | linear-only tokens/s | vs cuBLAS (no graph) |",
+        o.layers
+    );
     println!("|---|---|---|---|---|---|");
+    let scaled = |l: usize| {
+        if l < o.layers {
+            format!("{l} (time scaled x{:.2})", o.layers as f64 / l as f64)
+        } else {
+            format!("{l}")
+        }
+    };
     for &batch in &o.batches {
-        // cuBLAS
+        let x_h = rand_f16(g, batch * 6912, 1)?;
+        let mut y_h = g.alloc_f16(batch * 6912)?;
+        let mut rows: Vec<(String, usize, Option<f64>, String)> = Vec::new();
+
+        // cuBLAS FP16
         let mut f16_layers = Vec::new();
         for li in 0..lf {
             let ws: Vec<_> = BITNET_2B_LAYER
@@ -406,19 +509,30 @@ fn layer_stack(g: &Gpu, cublas: &Cublas, o: &Opts) -> Result<()> {
                 .collect::<Result<_>>()?;
             f16_layers.push(ws);
         }
-        let x_h = rand_f16(g, batch * 6912, 1)?;
-        let mut y_h = g.alloc_f16(batch * 6912)?;
-        let t_f16 = measure(g, o, |_| {
-            for ws in &f16_layers {
-                for (j, (n, k)) in BITNET_2B_LAYER.iter().enumerate() {
-                    cublas.gemm(&ws[j], &x_h, &mut y_h, *n, *k, batch)?;
-                }
+        let t = measure(g, o, |_| {
+            f16_step(cublas, &f16_layers, &x_h, &mut y_h, batch)
+        })?;
+        rows.push(("cuBLAS FP16".into(), lf, Some(t), String::new()));
+        match g.capture(|| f16_step(cublas, &f16_layers, &x_h, &mut y_h, batch)) {
+            Ok(graph) => {
+                let t = measure(g, o, |_| graph.launch())?;
+                rows.push((
+                    "cuBLAS FP16 + CUDA graph".into(),
+                    lf,
+                    Some(t),
+                    String::new(),
+                ));
             }
-            Ok(())
-        })? * o.layers as f64
-            / lf as f64;
+            Err(e) => rows.push((
+                "cuBLAS FP16 + CUDA graph".into(),
+                lf,
+                None,
+                format!("capture failed: {e}"),
+            )),
+        }
         drop(f16_layers);
 
+        // ternary W2A8
         let mut t_layers = Vec::new();
         for li in 0..lt {
             let ws: Vec<_> = BITNET_2B_LAYER
@@ -431,44 +545,50 @@ fn layer_stack(g: &Gpu, cublas: &Cublas, o: &Opts) -> Result<()> {
         let mut a2560 = g.alloc_acts(batch, 2560)?;
         let mut a6912 = g.alloc_acts(batch, 6912)?;
         let res = rand_f16(g, batch * 2560, 3)?;
-        let t_tern = measure(g, o, |_| {
-            for ws in &t_layers {
-                g.quantize(&x_h, None, 1e-5, &mut a2560)?; // attn input (q, k, v)
-                for j in 0..3 {
-                    g.gemm_i8(&ws[j], &a2560, None, &mut y_h, Launch::default())?;
-                }
-                g.quantize(&x_h, None, 1e-5, &mut a2560)?; // o-proj input
-                g.gemm_i8(&ws[3], &a2560, Some(&res), &mut y_h, Launch::default())?;
-                g.quantize(&x_h, None, 1e-5, &mut a2560)?; // ffn input (gate, up)
-                g.gemm_i8(&ws[4], &a2560, None, &mut y_h, Launch::default())?;
-                g.gemm_i8(&ws[5], &a2560, None, &mut y_h, Launch::default())?;
-                g.quantize(&x_h, None, 1e-5, &mut a6912)?; // down-proj input
-                g.gemm_i8(&ws[6], &a6912, Some(&res), &mut y_h, Launch::default())?;
+        let t = measure(g, o, |_| {
+            tern_step(g, &t_layers, &x_h, &mut a2560, &mut a6912, &res, &mut y_h)
+        })?;
+        rows.push(("ternary W2A8".into(), lt, Some(t), String::new()));
+        match g.capture(|| tern_step(g, &t_layers, &x_h, &mut a2560, &mut a6912, &res, &mut y_h)) {
+            Ok(graph) => {
+                let t = measure(g, o, |_| graph.launch())?;
+                rows.push((
+                    "ternary W2A8 + CUDA graph".into(),
+                    lt,
+                    Some(t),
+                    String::new(),
+                ));
             }
-            Ok(())
-        })? * o.layers as f64
-            / lt as f64;
+            Err(e) => rows.push((
+                "ternary W2A8 + CUDA graph".into(),
+                lt,
+                None,
+                format!("capture failed: {e}"),
+            )),
+        }
         drop(t_layers);
-        let scaled = |l: usize| {
-            if l < o.layers {
-                format!("{l} (time scaled x{:.2})", o.layers as f64 / l as f64)
-            } else {
-                format!("{l}")
+
+        let base = rows[0].2.map(|t| t * o.layers as f64 / lf as f64);
+        for (path, l, t, err) in rows {
+            match t {
+                Some(t) => {
+                    let t = t * o.layers as f64 / l as f64;
+                    let tok_s = batch as f64 * 1e6 / t;
+                    let sp = base.map(|b| b / t).unwrap_or(f64::NAN);
+                    println!(
+                        "| {batch} | {path} | {} | {t:.0} us | {tok_s:.0} | {sp:.2}x |",
+                        scaled(l)
+                    );
+                    csv(format!(
+                        "layer_stack,{batch},{path},{l},{t:.3},{tok_s:.3},{sp:.4}"
+                    ));
+                }
+                None => println!(
+                    "| {batch} | {path} | {} | n/a | n/a | n/a ({err}) |",
+                    scaled(l)
+                ),
             }
-        };
-        println!(
-            "| {batch} | cuBLAS FP16 | {} | {:.0} us | {:.0} | 1.00x |",
-            scaled(lf),
-            t_f16,
-            batch as f64 * 1e6 / t_f16
-        );
-        println!(
-            "| {batch} | ternary W2A8 | {} | {:.0} us | {:.0} | {:.2}x |",
-            scaled(lt),
-            t_tern,
-            batch as f64 * 1e6 / t_tern,
-            t_f16 / t_tern
-        );
+        }
     }
     println!();
     Ok(())

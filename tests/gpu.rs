@@ -110,7 +110,7 @@ fn int8_path_is_bit_exact() {
                     );
                 }
                 // 3. fused single-launch kernel
-                if batch * k <= ternary_gemm::gpu::FUSED_SMEM_LIMIT {
+                if batch * k <= g.info.fused_smem_limit {
                     let mut out = g.alloc_f16(batch * n).unwrap();
                     g.gemm_i8_fused(&w, &x, batch, None, 1e-5, r, &mut out, Launch::default())
                         .unwrap();
@@ -141,7 +141,7 @@ fn fused_rmsnorm_matches_within_tolerance() {
     let mut rng = StdRng::seed_from_u64(43);
     for &(n, k) in SHAPES {
         for &batch in &[1usize, 4] {
-            if batch * k > ternary_gemm::gpu::FUSED_SMEM_LIMIT {
+            if batch * k > g.info.fused_smem_limit {
                 continue;
             }
             let c = make_case(&mut rng, n, k, batch);

@@ -1,3 +1,4 @@
 /target
 .venv-cuda/
 results/*.tmp
+.venv-plot/

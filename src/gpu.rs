@@ -20,8 +20,13 @@ pub const KERNEL_SOURCE: &str = include_str!("../kernels/ternary.cu");
 pub const BATCH_TILES: [usize; 5] = [1, 2, 4, 8, 16];
 /// Rows-per-warp instantiations.
 pub const ROWS_PER_WARP: [u32; 3] = [1, 2, 4];
-/// Largest dynamic shared memory the fused kernel will request (bytes): batch * K must fit.
-pub const FUSED_SMEM_LIMIT: usize = 47 * 1024; // 48 KiB default limit minus static shared memory
+/// Conservative fused-kernel shared-memory budget (bytes) used when the opt-in attribute can't be
+/// set: the 48 KiB default per-block limit minus static shared memory. The real limit for a device
+/// is [`DeviceInfo::fused_smem_limit`], which opts in to the larger per-block carve-out
+/// (~99 KiB on sm_86/89/120, ~163 KiB on sm_80, ~227 KiB on sm_90).
+pub const FUSED_SMEM_LIMIT: usize = 47 * 1024;
+/// Static shared memory reserved by the fused kernel (scales, sums, reduction scratch), rounded up.
+const FUSED_STATIC_SMEM: usize = 1024;
 
 #[derive(Debug)]
 pub enum Error {
@@ -103,6 +108,8 @@ pub struct DeviceInfo {
     pub attr_peak_gbps: f64,
     /// The NVRTC target the kernels were compiled for.
     pub ptx_arch: String,
+    /// Max `batch * K` bytes the single-launch fused kernel accepts on this device.
+    pub fused_smem_limit: usize,
 }
 
 /// ternary weights resident on the device.
@@ -171,7 +178,8 @@ impl Gpu {
         // Single stream: skip cudarc's per-buffer event tracking (it would add work to every launch).
         // SAFETY: all work is issued on one stream, so no cross-stream synchronization is needed.
         unsafe { ctx.disable_event_tracking() };
-        let stream = ctx.default_stream();
+        // A real (non-legacy) stream: the legacy default stream can't be captured into a CUDA graph.
+        let stream = ctx.new_stream()?;
         let (maj, min) = ctx.compute_capability()?;
         if (maj, min) < (6, 1) {
             return Err(Error::NoCuda(format!(
@@ -235,6 +243,28 @@ impl Gpu {
             funcs.insert(n, f);
         }
         let attr = |a| ctx.attribute(a).map(|v| v as i64);
+        // Opt the fused kernels in to the large dynamic shared-memory carve-out so the single-launch
+        // path covers bigger batch * K. Falls back to the 48 KiB default if the driver refuses.
+        let optin =
+            attr(sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN)
+                .unwrap_or(0) as usize;
+        let mut fused_smem_limit = FUSED_SMEM_LIMIT;
+        if optin > FUSED_SMEM_LIMIT + FUSED_STATIC_SMEM {
+            let want = optin - FUSED_STATIC_SMEM;
+            let ok = funcs
+                .iter()
+                .filter(|(n, _)| n.starts_with("ternary_i8_fused_"))
+                .all(|(_, f)| {
+                    f.set_attribute(
+                        sys::CUfunction_attribute::CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
+                        want as i32,
+                    )
+                    .is_ok()
+                });
+            if ok {
+                fused_smem_limit = want;
+            }
+        }
         let mem_khz = attr(sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_MEMORY_CLOCK_RATE)?;
         let bus_bits = attr(sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_GLOBAL_MEMORY_BUS_WIDTH)?;
         let info = DeviceInfo {
@@ -246,6 +276,7 @@ impl Gpu {
             total_mem: ctx.total_mem()?,
             attr_peak_gbps: 2.0 * mem_khz as f64 * 1e3 * (bus_bits as f64 / 8.0) / 1e9,
             ptx_arch,
+            fused_smem_limit,
         };
         Ok(Self {
             ctx,
@@ -492,7 +523,7 @@ impl Gpu {
     }
 
     /// Single-launch W2A8: activation quantization (+ optional RMSNorm) fused into the prologue.
-    /// Requires `batch * K <= FUSED_SMEM_LIMIT`.
+    /// Requires `batch * K <= self.info.fused_smem_limit` (device dependent, >= [`FUSED_SMEM_LIMIT`]).
     #[allow(clippy::too_many_arguments)]
     pub fn gemm_i8_fused(
         &self,
@@ -510,8 +541,11 @@ impl Gpu {
             return shape_err("x / gamma too small");
         }
         let smem = batch * w.k;
-        if smem > FUSED_SMEM_LIMIT {
-            return shape_err(format!("fused kernel needs batch*K={smem} B of shared memory > {FUSED_SMEM_LIMIT}; use quantize + gemm_i8"));
+        if smem > self.info.fused_smem_limit {
+            return shape_err(format!(
+                "fused kernel needs batch*K={smem} B of shared memory > {} on this device; use quantize + gemm_i8",
+                self.info.fused_smem_limit
+            ));
         }
         let bt = batch_tile(batch)?;
         let (cfg, r) = self.row_launch(w.n, l, smem as u32)?;
@@ -630,6 +664,38 @@ impl Gpu {
         // SAFETY: shapes validated above.
         unsafe { b.launch(cfg) }?;
         Ok(())
+    }
+}
+
+/// A captured CUDA graph: a fixed sequence of launches replayed with one driver call.
+pub struct Graph {
+    graph: cudarc::driver::CudaGraph,
+}
+impl Graph {
+    /// Replay the captured work on the [`Gpu`]'s stream.
+    pub fn launch(&self) -> Result<()> {
+        Ok(self.graph.launch()?)
+    }
+}
+
+impl Gpu {
+    /// Capture every launch `f` issues on this GPU's stream into a [`Graph`] (nothing runs during
+    /// capture). `f` must only launch work: no allocation, copies to host or synchronization.
+    /// Buffer contents can change between replays; buffer *addresses* are baked into the graph.
+    pub fn capture(&self, f: impl FnOnce() -> Result<()>) -> Result<Graph> {
+        self.stream
+            .begin_capture(sys::CUstreamCaptureMode::CU_STREAM_CAPTURE_MODE_THREAD_LOCAL)?;
+        let body = f();
+        // Always end the capture, even if `f` failed, so the stream is usable again.
+        let ended = self.stream.end_capture(sys::CUgraphInstantiate_flags(0));
+        body?;
+        match ended? {
+            Some(graph) => {
+                graph.upload()?;
+                Ok(Graph { graph })
+            }
+            None => shape_err("captured an empty graph"),
+        }
     }
 }
 

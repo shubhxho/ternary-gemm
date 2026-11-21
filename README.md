@@ -10,11 +10,13 @@ Fused **ternary matmul kernels for LLM decode on NVIDIA GPUs**, written in Rust 
 
 > **Status: no GPU numbers have been measured yet.** The kernels compile with NVRTC 12.8, and `ptxas` assembles them for sm_80, sm_86, sm_89, sm_90 and sm_120. The CPU reference and a lane-by-lane emulation of the kernel index math pass on the CPU. The machine this was written on has **no GPU**, so every GPU latency or bandwidth figure below is either **NOT MEASURED** or explicitly a **theoretical estimate**. Run `./scripts/bench.sh` on a real GPU to fill them in.
 
+![Fused kernel data flow](docs/img/fused_kernel_dataflow.png)
+
 ## Quick start (on the GPU machine, e.g. an RTX 5060)
 
 ```bash
 git clone https://github.com/shubhxho/ternary-gemm && cd ternary-gemm
-./scripts/bench.sh            # build -> GPU correctness tests -> benchmarks -> results/<time>-<gpu>.md
+./scripts/bench.sh            # build -> GPU tests -> benchmarks -> results/<time>-<gpu>.{md,csv} + measured charts results/*.png
 ./scripts/bench.sh --quick    # batches 1 and 16 only
 ```
 
@@ -51,6 +53,16 @@ let mut y = gpu.alloc_f16(batch * n)?;
 gpu.gemm_i8_fused(&w, &x, batch, Some(&gamma), 1e-5, Some(&residual), &mut y, Launch::default())?;
 ```
 
+To hide launch overhead, record a whole decode step once and replay it as a CUDA graph:
+
+```rust
+let graph = gpu.capture(|| {            // launches only: no allocation, no host copies, no sync
+    gpu.gemm_i8_fused(&w, &x, batch, Some(&gamma), 1e-5, None, &mut y, Launch::default())?;
+    Ok(())
+})?;
+graph.launch()?;                        // replays every launch in one call; buffer addresses are baked in
+```
+
 Each call checks every buffer length and shape before launching, so bad input returns an error instead of reading or writing out of bounds.
 
 ## Design
@@ -70,7 +82,7 @@ Microsoft's BitNet GPU kernel uses the same basic decode-to-int8-then-dp4a idea 
 |---|---|
 | `quantize_i8` | One block per token. Optional RMSNorm, then absmax, `s = 127/absmax`, `q = clamp(rint(x·s))` and `Σq`. |
 | `ternary_i8_b{BT}_r{R}` | Main W2A8 loop. One warp computes `R ∈ {1,2,4}` rows for up to `BT ∈ {1,2,4,8,16}` tokens. Weights are decoded once into registers and reused across the batch. 16 `dp4a` per lane per row per token per chunk. Warp-shuffle reduction. Epilogue `(acc − Σq) / s · scale (+ residual)` with explicit `__fdiv_rn`, `__fmul_rn` and `__fadd_rn`, so there is no FMA contraction and the result is bit-exact against the CPU. |
-| `ternary_i8_fused_b{BT}_r{R}` | Single launch. Each block re-quantizes the activations (fp16 → RMSNorm → int8) into shared memory, then runs the same loop. It trades redundant L2 reads of the small activation vector for one fewer launch and one fewer global round trip. Needs `batch·K ≤ 47 KiB` of shared memory. |
+| `ternary_i8_fused_b{BT}_r{R}` | Single launch. Each block re-quantizes the activations (fp16 → RMSNorm → int8) into shared memory, then runs the same loop. It trades redundant L2 reads of the small activation vector for one fewer launch and one fewer global round trip. Shared memory needed is `batch·K` bytes. At startup the fused kernels opt in to the device's large dynamic shared-memory carve-out (`MAX_SHARED_MEMORY_PER_BLOCK_OPTIN − 1 KiB`, ≈ 99 KiB on sm_86/89/120, ≈ 163 KiB on sm_80, ≈ 227 KiB on sm_90). If the driver refuses, the limit falls back to 47 KiB. The limit in use is `gpu.info.fused_smem_limit`. |
 | `ternary_f16_b{BT}_r{R}` | W2A16. Each code byte is spliced under `0x4B000000`, giving the float `2²³ + c`, and `2²³ + 1` is subtracted, so decoding a weight is one `PRMT` plus one `FADD`. fp32 FMA accumulation. |
 | `naive_i8`, `naive_f16` | Baselines: one thread per output, natural 2-bit layout, scalar decode and multiply, uncoalesced. |
 
@@ -101,7 +113,8 @@ The kernels are compiled at first use, for the exact GPU (`compute_XY` of the de
 The report contains:
 * A correctness table.
 * A per-shape table for cuBLAS FP16, naive ternary, W2A8 GEMV only, W2A8 quantize + GEMV, W2A8 fused and W2A16, at batches 1, 2, 4, 8 and 16. It gives latency in µs, effective GB/s, % of peak DRAM bandwidth and speedup over cuBLAS.
-* A full **BitNet-b1.58-2B linear-layer stack**: 30 layers × (q, k, v, o, gate, up, down), comparing the ternary path with cuBLAS FP16 as linear-only tokens/s.
+* A full **BitNet-b1.58-2B linear-layer stack**: 30 layers × (q, k, v, o, gate, up, down), comparing the ternary path with cuBLAS FP16 as linear-only tokens/s. Each path runs twice, launched op by op and replayed as one **CUDA graph**.
+* The same numbers as CSV (`--csv`). `scripts/plot_results.py` turns the CSV into charts titled "Measured on <GPU>": latency and % of peak bandwidth per shape, plus layer-stack tokens/s.
 
 For honest DRAM numbers, weights rotate through enough copies to exceed 3× the L2 size, the layer stack allocates all 30 layers' weights, and buffers are filled with random data, not zeros.
 
@@ -110,6 +123,9 @@ For honest DRAM numbers, weights rotate through enough copies to exceed 3× the 
 When no GPU is found, `cargo run --release --bin bench` times the scalar CPU reference. On the 8-vCPU build box it took 16.4 ms for 2560×2560 and 42.5 ms for 2560×6912 at batch 1, single-threaded. This is an oracle and was deliberately left unoptimized.
 
 ### Theoretical estimate (NOT measured): DRAM roofline at batch 1, RTX 5060 at 448 GB/s
+
+![Weight bytes per matrix](docs/img/bytes_per_matrix.png)
+![Roofline latency floor, theoretical](docs/img/roofline_latency_floor.png)
 
 `t_min = bytes / 448 GB/s`. fp16 moves 2 bytes per weight and 2-bit ternary moves 0.25 bytes per weight, so **weight traffic is exactly 8× smaller**. Activations, outputs and per-row scales bring the total ratio slightly under 8.
 
@@ -124,34 +140,49 @@ When no GPU is found, `cargo run --release --bin bench` times the scalar CPU ref
 
 For the whole BitNet-2B linear stack, 30 × 69.5 M weights are 4.17 GB in fp16 against 0.52 GB in ternary. That puts the bandwidth ceiling at ≈ 107 tokens/s for fp16 and ≈ 855 tokens/s for ternary at batch 1 (`1 / (bytes / 448 GB/s)`).
 
+![Tokens/s ceiling, theoretical](docs/img/tokens_per_s_ceiling.png)
+
+All three charts come from `scripts/make_doc_charts.py` and are pure arithmetic. They are labeled **Theoretical (not measured)**.
+
 These are **upper bounds**, not predictions. Several things will keep the real speedup below 8×:
-* Small ternary GEMVs, at 1–10 µs ideal, are close to **kernel-launch overhead** of a few µs each. The layer stack issues 11 launches per layer; CUDA graphs would help and aren't implemented yet.
+* Small ternary GEMVs, at 1–10 µs ideal, are close to **kernel-launch overhead** of a few µs each. The layer stack issues 11 launches per layer. The benchmark also times a CUDA-graph replay to measure how much of that overhead graphs remove.
 * The tail chunk, where K is not a multiple of 2048, idles some lanes.
 * cuBLAS is near roofline on large shapes.
 * On small shapes where fp16 weights fit in L2, cuBLAS also benefits if the cache isn't flushed. The benchmark prevents this by rotating weight copies.
 
 Microsoft reports 1.3×–3.6× over BF16 for its W2A8 GEMV on an A100. Expect something in that range, not 8×, until it's measured.
 
-## Novelty check: what already exists (searched Nov 2026)
+## Novelty check: has someone already done this? (searched Nov 2026)
 
-Honest summary: **ternary GPU GEMV with 2-bit packing and dp4a is not new.** What this repo adds is the packaging and the fusion, not the core trick.
+**Verdict: yes, mostly.** A Rust + CUDA ternary (BitNet b1.58) decode engine with a fused RMSNorm → int8 quantization kernel, bit-exact checks against a scalar reference, and measured consumer-GPU numbers already exists: **[Quitetall/tritium](https://github.com/Quitetall/tritium)**. It is Apache-2.0, has a `tritium-cuda` crate (`rmsnorm_quant_i8`, TQ2_0 IMMA kernels, built with nvcc), and its authors report ~280–300 tok/s end-to-end for BitNet-2B4T on an RTX 4090 ([r/LocalLLaMA post](https://www.reddit.com/r/LocalLLaMA/comments/1vbf0nt/)). The core trick (2-bit pack → int8 → `dp4a`) is also in Microsoft's own BitNet GPU kernel. This repo is **not a first**.
 
-| project | what it is | how this differs |
+What is narrower or different here:
+* It is a **small standalone kernel crate**, not a whole inference engine.
+* Kernels are compiled at runtime with **NVRTC**, so building needs no nvcc and no CUDA toolkit.
+* RMSNorm and quantization are fused into **the same launch as the GEMV**, along with the residual add in the epilogue.
+* It handles **any N, any K % 64, and batch 1–16**.
+* It ships a cuBLAS-FP16 / naive / CUDA-graph **comparison harness** with CSV output and charts.
+* Weakness: **no measurements yet**. Tritium and Cortex-Bitnet both publish real numbers.
+
+| project | what it is | relation to this repo |
 |---|---|---|
-| [microsoft/BitNet `gpu/`](https://github.com/microsoft/BitNet/tree/main/gpu) | CUDA W2A8 **GEMV** for BitNet-b1.58-2B: interleaved 2-bit packing, decode to int8, `dp4a`, bf16 output, called from PyTorch via ctypes. **M = 1 only, hard-coded shapes**, and activation quantization done separately in PyTorch. A100 results: 13–31 µs, 1.3–3.6× over BF16. | Same core idea. Here it's Rust-native (cudarc + NVRTC, no PyTorch or nvcc), handles **any N and any K % 64**, **batch 1–16**, fuses **RMSNorm + absmax quantization into the prologue** and **residual into the epilogue**, uses offset codes so decode is shift+mask only, adds a W2A16 path, and checks bit-exactly against a CPU oracle. |
-| [microsoft/BitBLAS](https://github.com/microsoft/BitBLAS) (Ladder, OSDI '24) | TVM/TIR-generated mixed-precision GEMV/GEMM, including INT2×INT8 for BitNet. Reports 8× (GEMV) and 2× (GEMM) over cuBLAS FP16 on an A100. Python/TVM toolchain. | No TVM or tuning step; a small, hand-written, auditable kernel set callable from Rust. BitBLAS is likely the stronger performance baseline and isn't benchmarked here yet. |
-| llama.cpp `TQ1_0` / `TQ2_0` | Ternary GGUF formats, CPU kernels merged in 2024. CUDA `TQ2_0` PRs ([#11183](https://github.com/ggml-org/llama.cpp/pull/11183), draft [#30278](https://github.com/ggml-org/llama.cpp/pull/30278)) were still open, unmerged, when searched. | Standalone library, not an inference engine. No GGUF loader yet. |
-| [microsoft/T-MAC](https://github.com/microsoft/T-MAC) | Lookup-table low-bit GEMM, **CPU only**. | GPU. |
-| Rust: [`bitnet-quantize`](https://docs.rs/bitnet-quantize) (CubeCL kernels), [`tritium-candle`](https://docs.rs/tritium-candle) (CPU reference op for candle), [`unsloth-rs`](https://docs.rs/unsloth-rs) (ternary GPU path still a TODO, falls back to CPU), [`mistralrs-quant`](https://docs.rs/mistralrs-quant) (fp16/bf16 GEMV, not ternary) | There is Rust BitNet work, but as far as I found there is no hand-tuned CUDA W2A8 decode kernel with fused norm and quantization and published cuBLAS comparisons. | That gap is what this repo targets. I didn't run or benchmark those crates. |
+| [Quitetall/tritium](https://github.com/Quitetall/tritium) | Rust BitNet inference engine with CUDA kernels (`crates/tritium-cuda`): fused RMSNorm + int8 quantization, ternary IMMA/dp4a paths, bit-identical to a scalar reference. Reports ~280–300 tok/s on an RTX 4090. | **Closest prior art.** It does more (a full model) and is measured. This repo is a smaller, NVRTC-only kernel library with fused quant+GEMV in one launch. |
+| [Tabakkui/Cortex-Bitnet](https://github.com/Tabakkui/Cortex-Bitnet) ([post](https://www.reddit.com/r/OpenAssistant/comments/1v8veh2/)) | Custom CUDA ternary engine (Python host, sm_86): fused FFN/RMSNorm, CUDA graphs, int8 lm_head. Reports 206–217 tok/s for BitNet-2B on an RTX 3070. PolyForm Noncommercial. | Same goals and also measured. Not Rust. |
+| [microsoft/BitNet `gpu/`](https://github.com/microsoft/BitNet/tree/main/gpu) ([bitnet.cpp paper](https://arxiv.org/abs/2502.11880)) | CUDA W2A8 GEMV: 2-bit interleave → int8 → `dp4a`. M = 1 only, hard-coded shapes, quantization done separately in PyTorch. Reports 1.3–3.6× over BF16 on an A100. | Same core idea. This repo adds arbitrary shapes, batch 1–16, fused prologue and epilogue, and Rust with no nvcc. |
+| [microsoft/BitBLAS](https://github.com/microsoft/BitBLAS) (Ladder, OSDI '24) | TVM-generated INT2×INT8 GEMV/GEMM. | Likely a stronger baseline. Not benchmarked here yet. |
+| [Spectra-1.1 / TriRun](https://arxiv.org/abs/2506.23025), [TernaInfer](https://github.com/Gu-J/TernaInfer) (DAC 2026), [BITCOS](https://arxiv.org/abs/2609.16338) (Intel Xe2) | Research ternary kernels: FP16×INT2 tensor-core, FPGA/accelerator-style, Intel GPU. | Different hardware paths. |
+| llama.cpp `TQ1_0` / `TQ2_0` | Ternary GGUF; CUDA `TQ2_0` PRs ([#11183](https://github.com/ggml-org/llama.cpp/pull/11183), draft [#30278](https://github.com/ggml-org/llama.cpp/pull/30278)) still unmerged. | Inference engine, not a library. |
+| Other Rust work: [`bitnet-quantize`](https://docs.rs/bitnet-quantize) and `tritter-accel` (CubeCL), [nanochat-rs-ternary](https://github.com/architehc/nanochat-rs-ternary) (claims a CUDA dp4a decode path), [tidynest/bitnet-toy](https://github.com/tidynest/bitnet-toy) (cudarc + NVRTC training, cuBLAS int8), [burn](https://github.com/tracel-ai/burn) (absmean + packed 2-bit quantization), [candle #1956](https://github.com/huggingface/candle/issues/1956) (BitNet still open) | Rust ternary/BitNet pieces at various depths. | I didn't run or benchmark them. |
+| [microsoft/T-MAC](https://github.com/microsoft/T-MAC) | Lookup-table low-bit GEMM, CPU only. | Different hardware. |
 
 ## Limitations
 
 * **No GPU measurements yet**, as described above.
 * `K` must be a multiple of 64. Batch is limited to 1–16, which is decode-oriented; there is no tensor-core path for prefill.
 * Scales are per row (or per tensor), with no per-group scales.
-* The fused kernel needs `batch·K ≤ 47 KiB` of shared memory, for example batch ≤ 4 at K = 11008. Above that, use `quantize` plus `gemm_i8`.
+* The fused kernel needs `batch·K` bytes of shared memory, up to the opt-in limit (≈ 99 KiB on consumer GPUs, so batch ≤ 9 at K = 11008). Above that, use `quantize` plus `gemm_i8`. A large carve-out lowers occupancy; whether fused still wins at big batch·K is unmeasured.
 * There is no split-K, so very small `N` with very large `K` underfills the GPU.
-* There are no CUDA graphs; launch overhead isn't hidden in the layer-stack benchmark.
+* CUDA graph capture (`Gpu::capture`) is untested on hardware, like everything else on the GPU side. If capture fails, the benchmark prints `n/a` with the error and carries on.
 * The layer-stack benchmark is linear layers only. It leaves out attention, the activation function, embeddings and lm_head.
 * Not yet compared against BitBLAS, the BitNet GPU kernel, or llama.cpp on the same GPU.
 
@@ -162,10 +193,12 @@ kernels/ternary.cu        all CUDA kernels (NVRTC, no includes)
 src/pack.rs               absmean quantization, 2-bit packing (permuted + natural layouts)
 src/reference.rs          CPU reference (oracle)
 src/gpu.rs                safe cudarc wrapper, cuBLAS baseline, CUDA-event timer
-src/bin/bench.rs          benchmark -> Markdown report
+src/bin/bench.rs          benchmark -> Markdown report (+ --csv)
 src/bin/compile_check.rs  NVRTC + ptxas register/spill report (no GPU needed)
 tests/                    cpu_reference, kernel_emulation (CPU), gpu (needs GPU)
-scripts/bench.sh          one-shot build + verify + benchmark
+scripts/bench.sh          one-shot build + verify + benchmark + measured charts
+scripts/plot_results.py   bench CSV -> results/*.png ("Measured on <GPU>")
+scripts/make_doc_charts.py  docs/img/*.png (theoretical charts + data-flow diagram)
 ```
 
 License: MIT.
