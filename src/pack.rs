@@ -161,6 +161,30 @@ impl PackedTernary {
         ((word >> (2 * (k % 16))) & 3) as i8 - 1
     }
 
+    /// Decode back to a row-major `[n][k]` ternary matrix (inverse of [`Self::from_ternary`]).
+    pub fn unpack(&self) -> Vec<i8> {
+        let mut out = Vec::with_capacity(self.n * self.k);
+        for r in 0..self.n {
+            for c in 0..self.k {
+                out.push(self.get(r, c));
+            }
+        }
+        out
+    }
+
+    /// Fraction of weights that are zero (ternary models are typically 30-40% zeros).
+    pub fn sparsity(&self) -> f64 {
+        if self.n == 0 {
+            return 0.0;
+        }
+        let zeros: usize = self
+            .natural
+            .iter()
+            .map(|&w| (0..16).filter(|t| (w >> (2 * t)) & 3 == 1).count())
+            .sum();
+        zeros as f64 / (self.n * self.k) as f64
+    }
+
     /// Bytes of packed weights (one layout).
     pub fn weight_bytes(&self) -> usize {
         self.permuted.len() * 4
