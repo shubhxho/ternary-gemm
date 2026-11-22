@@ -5,7 +5,9 @@
 
 use std::process::Command;
 use ternary_gemm::autotune::kernel_name;
-use ternary_gemm::gpu::{compile, BATCH_TILES, ROWS_PER_WARP};
+use ternary_gemm::gpu::{
+    compile, compile_tensor_cores, BATCH_TILES, ROWS_PER_WARP, TENSOR_CORE_KERNELS,
+};
 use ternary_gemm::tuning::{KernelConfig, SM120_I8_FUSED_REGS, SM120_I8_REGS};
 
 fn ptx(arch: &str) -> Option<String> {
@@ -26,14 +28,7 @@ fn all_configs() -> Vec<(KernelConfig, usize)> {
     for fused in [false, true] {
         for &r in &ROWS_PER_WARP {
             for &b in &BATCH_TILES {
-                v.push((
-                    KernelConfig {
-                        warps: 4,
-                        rows_per_warp: r,
-                        fused,
-                    },
-                    b,
-                ));
+                v.push((KernelConfig::dp4a(4, r, fused), b));
             }
         }
     }
@@ -106,4 +101,32 @@ fn sm120_register_table_matches_ptxas() {
         assert_eq!(regs.get(&name), Some(&table[bi][ri]), "{name}");
     }
     std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn compute_80_plus_has_tensor_core_kernels() {
+    for arch in ["compute_80", "compute_89", "compute_120"] {
+        match compile_tensor_cores(arch) {
+            Ok(p) => {
+                let src = p.to_src();
+                for name in TENSOR_CORE_KERNELS {
+                    assert!(
+                        src.contains(&format!(".entry {name}(")),
+                        "{arch}: missing {name}"
+                    );
+                    assert!(
+                        src.contains("mma.sync.aligned.m16n8k16"),
+                        "{arch}: missing mma.sync"
+                    );
+                }
+            }
+            Err(e) => {
+                if std::env::var("TERNARY_REQUIRE_NVRTC").as_deref() == Ok("1") {
+                    panic!("TERNARY_REQUIRE_NVRTC=1 but tensor-core NVRTC failed for {arch}: {e}");
+                }
+                eprintln!("SKIPPED (no NVRTC): {e}");
+                return;
+            }
+        }
+    }
 }

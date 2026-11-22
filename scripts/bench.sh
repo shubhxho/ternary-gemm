@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # One-shot: build, verify correctness on the GPU, benchmark, write a Markdown report.
 #
-#   ./scripts/bench.sh            # full run (batches 1,2,4,8,16)
-#   ./scripts/bench.sh --quick    # batches 1 and 16 only
+#   ./scripts/bench.sh                    # full run (batches 1,2,4,8,16)
+#   ./scripts/bench.sh --quick            # batches 1 and 16 only
+#   ./scripts/bench.sh --tensor-cores     # also verify and time the sm_80+ mma.sync path
+#   ./scripts/bench.sh --quick --tensor-cores
 #
 # Needs: an NVIDIA GPU + driver (>= 570 for RTX 50-series), Rust (rustup), and the CUDA 12.x
 # runtime libraries libnvrtc + libcublas (a CUDA Toolkit install, or this script can pip-install them).
@@ -53,6 +55,13 @@ GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1 | tr ' /'
 STEM="results/$(date +%Y%m%d-%H%M%S)-${GPU_NAME}"
 OUT="$STEM.md"
 say "Benchmark -> $OUT"
+TENSOR_CORES=0
+for arg in "$@"; do
+  if [ "$arg" = "--tensor-cores" ]; then TENSOR_CORES=1; fi
+done
+if [ "$TENSOR_CORES" = 1 ]; then
+  echo "Including the tensor-core backend (mma.sync, sm_80+). GPU speedups are measured here; they are not estimated."
+fi
 cargo run --release --bin bench -- --csv "$STEM.csv" "$@" | tee "$OUT"
 {
   echo

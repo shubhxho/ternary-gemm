@@ -13,8 +13,13 @@ use half::f16;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// The CUDA source of all kernels (compiled at runtime with NVRTC).
+/// The CUDA source of the dp4a / fused kernels (compiled at runtime with NVRTC).
 pub const KERNEL_SOURCE: &str = include_str!("../kernels/ternary.cu");
+/// Tensor-core kernels (`ternary_tc_i8`, `ternary_tc_f16`). Compiled only for sm_80+.
+pub const TENSOR_CORE_SOURCE: &str = include_str!("../kernels/tensor_core.cu");
+
+/// Entry points defined in [`TENSOR_CORE_SOURCE`].
+pub const TENSOR_CORE_KERNELS: [&str; 2] = ["ternary_tc_i8", "ternary_tc_f16"];
 
 /// Batch-size template instantiations available on the device.
 pub const BATCH_TILES: [usize; 5] = [1, 2, 4, 8, 16];
@@ -77,9 +82,7 @@ pub fn nvrtc_options(arch: &str) -> CompileOptions {
     }
 }
 
-/// Compile the kernels to PTX for a virtual architecture such as `"compute_120"`.
-/// Works without a GPU (only libnvrtc is needed).
-pub fn compile(arch: &str) -> Result<Ptx> {
+fn nvrtc_present() -> Result<()> {
     // SAFETY: only checks whether the shared library can be dlopen'ed.
     if !unsafe { cudarc::nvrtc::sys::is_culib_present() } {
         return Err(Error::NoCuda(
@@ -87,12 +90,36 @@ pub fn compile(arch: &str) -> Result<Ptx> {
                 .into(),
         ));
     }
-    compile_ptx_with_opts(KERNEL_SOURCE, nvrtc_options(arch)).map_err(|e| match e {
+    Ok(())
+}
+
+fn compile_src(src: &str, arch: &str, name: &str) -> Result<Ptx> {
+    let mut opts = nvrtc_options(arch);
+    opts.name = Some(name.into());
+    compile_ptx_with_opts(src, opts).map_err(|e| match e {
         cudarc::nvrtc::CompileError::CompileError { log, .. } => {
             Error::Compile(log.to_string_lossy().into_owned())
         }
         other => Error::Compile(format!("{other:?}")),
     })
+}
+
+/// Compile the dp4a / fused kernels to PTX for a virtual architecture such as `"compute_120"`.
+/// Works without a GPU (only libnvrtc is needed).
+pub fn compile(arch: &str) -> Result<Ptx> {
+    nvrtc_present()?;
+    compile_src(KERNEL_SOURCE, arch, "ternary.cu")
+}
+
+/// Compile the tensor-core kernels to PTX. `arch` must be sm_80+ / compute_80+ (`mma.sync`).
+pub fn compile_tensor_cores(arch: &str) -> Result<Ptx> {
+    if !crate::tensor_core::arch_has_mma(arch) {
+        return Err(Error::Compile(format!(
+            "tensor-core path requires sm_80+ (mma.sync); got {arch}"
+        )));
+    }
+    nvrtc_present()?;
+    compile_src(TENSOR_CORE_SOURCE, arch, "tensor_core.cu")
 }
 
 /// Static facts about the device, used by the benchmarks.
@@ -130,19 +157,45 @@ pub struct GpuActs {
     pub sum: CudaSlice<i32>,
 }
 
+/// Selectable GEMM/GEMV backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Backend {
+    /// Existing `dp4a` kernels (sm_61+). Permuted 2-bit layout, optional fused quantize.
+    #[default]
+    Dp4a,
+    /// Tensor-core path (sm_80+): unpack 2-bit natural-layout weights into int8/fp16
+    /// fragments and issue `mma.sync.aligned.m16n8k16`. Not fused; call [`Gpu::quantize`]
+    /// first on the W2A8 path. `rows_per_warp` is ignored (the MMA M tile is 16).
+    TensorCore,
+}
+
 /// Kernel launch tuning.
 #[derive(Debug, Clone, Copy)]
 pub struct Launch {
-    /// Output rows per warp (1, 2 or 4). `None` = heuristic.
+    /// Output rows per warp (1, 2 or 4). `None` = heuristic. Ignored for [`Backend::TensorCore`].
     pub rows_per_warp: Option<u32>,
     /// Warps per block (1..=8).
     pub warps: u32,
+    /// Which kernel family to launch. Default: [`Backend::Dp4a`].
+    pub backend: Backend,
 }
 impl Default for Launch {
     fn default() -> Self {
         Self {
             rows_per_warp: None,
             warps: 4,
+            backend: Backend::Dp4a,
+        }
+    }
+}
+
+impl Launch {
+    /// A tensor-core launch with `warps` warps per block (each warp owns 16 output rows).
+    pub fn tensor_core(warps: u32) -> Self {
+        Self {
+            rows_per_warp: None,
+            warps,
+            backend: Backend::TensorCore,
         }
     }
 }
@@ -151,6 +204,7 @@ pub struct Gpu {
     pub ctx: Arc<CudaContext>,
     pub stream: Arc<CudaStream>,
     _module: Arc<CudaModule>,
+    _tc_module: Option<Arc<CudaModule>>,
     funcs: HashMap<String, CudaFunction>,
     pub info: DeviceInfo,
 }
@@ -254,6 +308,16 @@ impl Gpu {
             let f = module.load_function(&n)?;
             funcs.insert(n, f);
         }
+        let mut tc_module = None;
+        if (maj, min) >= (8, 0) {
+            let tc_ptx = compile_tensor_cores(&ptx_arch)?;
+            let tc = ctx.load_module(tc_ptx)?;
+            for n in TENSOR_CORE_KERNELS {
+                let f = tc.load_function(n)?;
+                funcs.insert(n.to_string(), f);
+            }
+            tc_module = Some(tc);
+        }
         let attr = |a| ctx.attribute(a).map(|v| v as i64);
         // Opt the fused kernels in to the large dynamic shared-memory carve-out so the single-launch
         // path covers bigger batch * K. Falls back to the 48 KiB default if the driver refuses.
@@ -294,6 +358,7 @@ impl Gpu {
             ctx,
             stream,
             _module: module,
+            _tc_module: tc_module,
             funcs,
             info,
         })
@@ -306,6 +371,11 @@ impl Gpu {
     /// Registers per thread the driver reports for a loaded kernel (e.g. `"ternary_i8_b16_r4"`).
     pub fn kernel_regs(&self, name: &str) -> Option<u32> {
         self.funcs.get(name)?.num_regs().ok().map(|r| r as u32)
+    }
+
+    /// True when this device compiled and loaded the sm_80+ `mma.sync` kernels.
+    pub fn supports_tensor_cores(&self) -> bool {
+        self._tc_module.is_some()
     }
 
     pub fn synchronize(&self) -> Result<()> {
@@ -445,7 +515,10 @@ impl Gpu {
                 w.k
             ));
         }
-        if w.permuted.len() != w.n * w.k / 16 || w.row_scale.len() != w.n {
+        if w.permuted.len() != w.n * w.k / 16
+            || w.natural.len() != w.n * w.k / 16
+            || w.row_scale.len() != w.n
+        {
             return shape_err("inconsistent GpuTernary");
         }
         if out.len() < batch * w.n {
@@ -522,6 +595,9 @@ impl Gpu {
         if a.k != w.k || a.q.len() < a.batch * a.k || a.s.len() < a.batch || a.sum.len() < a.batch {
             return shape_err("activations do not match weights");
         }
+        if l.backend == Backend::TensorCore {
+            return self.launch_tc_i8(w, a, residual, out, l);
+        }
         let bt = batch_tile(a.batch)?;
         let (cfg, r) = self.row_launch(w.n, l, 0)?;
         let f = self.func(&format!("ternary_i8_b{bt}_r{r}"));
@@ -560,6 +636,11 @@ impl Gpu {
         Self::check_common(w, batch, residual, out)?;
         if x.len() < batch * w.k || gamma.is_some_and(|g| g.len() < w.k) {
             return shape_err("x / gamma too small");
+        }
+        if l.backend == Backend::TensorCore {
+            return shape_err(
+                "fused tensor-core kernel is not implemented; use quantize + gemm_i8 with Backend::TensorCore",
+            );
         }
         let smem = batch * w.k;
         if smem > self.info.fused_smem_limit {
@@ -604,6 +685,9 @@ impl Gpu {
         if x.len() < batch * w.k {
             return shape_err("x too small");
         }
+        if l.backend == Backend::TensorCore {
+            return self.launch_tc_f16(w, x, batch, residual, out, l);
+        }
         let bt = batch_tile(batch)?;
         let (cfg, r) = self.row_launch(w.n, l, 0)?;
         let f = self.func(&format!("ternary_f16_b{bt}_r{r}"));
@@ -617,6 +701,74 @@ impl Gpu {
         };
         b.arg(out).arg(&n).arg(&k).arg(&bi);
         // SAFETY: shapes validated above.
+        unsafe { b.launch(cfg) }?;
+        Ok(())
+    }
+
+    fn tc_launch(&self, n: usize, l: Launch) -> Result<LaunchConfig> {
+        if l.backend != Backend::TensorCore {
+            return shape_err("tc_launch requires Backend::TensorCore");
+        }
+        if !(1..=8).contains(&l.warps) {
+            return shape_err("warps must be 1..=8");
+        }
+        if !self.supports_tensor_cores() {
+            return Err(Error::NoCuda(
+                "tensor-core path requires sm_80+ (mma.sync) and compiled ternary_tc_* kernels"
+                    .into(),
+            ));
+        }
+        let rows_per_block = l.warps as usize * 16;
+        Ok(LaunchConfig {
+            grid_dim: (n.div_ceil(rows_per_block) as u32, 1, 1),
+            block_dim: (32 * l.warps, 1, 1),
+            shared_mem_bytes: 0,
+        })
+    }
+
+    fn launch_tc_i8(
+        &self,
+        w: &GpuTernary,
+        a: &GpuActs,
+        residual: Option<&CudaSlice<f16>>,
+        out: &mut CudaSlice<f16>,
+        l: Launch,
+    ) -> Result<()> {
+        let cfg = self.tc_launch(w.n, l)?;
+        let null = 0u64;
+        let (n, k, batch) = (w.n as i32, w.k as i32, a.batch as i32);
+        let mut b = self.stream.launch_builder(self.func("ternary_tc_i8"));
+        b.arg(&w.natural).arg(&w.row_scale).arg(&a.q).arg(&a.s);
+        match residual {
+            Some(res) => b.arg(res),
+            None => b.arg(&null),
+        };
+        b.arg(out).arg(&n).arg(&k).arg(&batch);
+        // SAFETY: shapes validated by the caller; natural layout length checked in check_common.
+        unsafe { b.launch(cfg) }?;
+        Ok(())
+    }
+
+    fn launch_tc_f16(
+        &self,
+        w: &GpuTernary,
+        x: &CudaSlice<f16>,
+        batch: usize,
+        residual: Option<&CudaSlice<f16>>,
+        out: &mut CudaSlice<f16>,
+        l: Launch,
+    ) -> Result<()> {
+        let cfg = self.tc_launch(w.n, l)?;
+        let null = 0u64;
+        let (n, k, bi) = (w.n as i32, w.k as i32, batch as i32);
+        let mut b = self.stream.launch_builder(self.func("ternary_tc_f16"));
+        b.arg(&w.natural).arg(&w.row_scale).arg(x);
+        match residual {
+            Some(res) => b.arg(res),
+            None => b.arg(&null),
+        };
+        b.arg(out).arg(&n).arg(&k).arg(&bi);
+        // SAFETY: shapes validated by the caller.
         unsafe { b.launch(cfg) }?;
         Ok(())
     }

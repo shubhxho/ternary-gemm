@@ -99,6 +99,7 @@ fn int8_path_is_bit_exact() {
                         Launch {
                             rows_per_warp: Some(rpw),
                             warps: 4,
+                            ..Launch::default()
                         },
                     )
                     .unwrap();
@@ -237,6 +238,7 @@ fn f16_path_matches_within_tolerance() {
                     Launch {
                         rows_per_warp: Some(rpw),
                         warps: 4,
+                        ..Launch::default()
                     },
                 )
                 .unwrap();
@@ -386,4 +388,74 @@ mod signal_models {
 
 fn bits32(v: &[f32]) -> Vec<u32> {
     v.iter().map(|x| x.to_bits()).collect()
+}
+
+#[test]
+fn tensor_core_i8_matches_reference_when_gpu_supports_mma() {
+    let Some(g) = gpu() else { return };
+    if !g.supports_tensor_cores() {
+        eprintln!(
+            "SKIPPED (GPU compute capability {:?} < 8.0): tensor-core path",
+            g.info.compute_capability
+        );
+        return;
+    }
+    let mut rng = StdRng::seed_from_u64(99);
+    // Modest shapes (N not a multiple of 16, several batches) plus a BitNet-like one.
+    for &(n, k) in &[(16usize, 64usize), (17, 64), (37, 128), (2560, 2560)] {
+        for &batch in &[1usize, 3, 8, 16] {
+            let c = make_case(&mut rng, n, k, batch);
+            let w = g.upload_weights(&c.p).unwrap();
+            let x = g.upload_f16(&c.x).unwrap();
+            let res = g.upload_f16(&c.res).unwrap();
+            let mut acts = g.alloc_acts(batch, k).unwrap();
+            g.quantize(&x, None, 1e-5, &mut acts).unwrap();
+            let cpu_a = quantize_acts(&c.x, batch, k, None, 1e-5);
+            let expect = reference::gemm_i8(&c.p, &cpu_a, Some(&c.res[..]));
+            for warps in [1u32, 4] {
+                let mut out = g.alloc_f16(batch * n).unwrap();
+                g.gemm_i8(&w, &acts, Some(&res), &mut out, Launch::tensor_core(warps))
+                    .unwrap();
+                let got = g.download(&out).unwrap();
+                assert_eq!(
+                    count_bit_mismatch(&got, &expect),
+                    0,
+                    "ternary_tc_i8 {n}x{k} b{batch} warps={warps}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn tensor_core_f16_is_within_tolerance_when_gpu_supports_mma() {
+    let Some(g) = gpu() else { return };
+    if !g.supports_tensor_cores() {
+        eprintln!(
+            "SKIPPED (GPU compute capability {:?} < 8.0): tensor-core f16 path",
+            g.info.compute_capability
+        );
+        return;
+    }
+    let mut rng = StdRng::seed_from_u64(100);
+    let (n, k, batch) = (37usize, 128usize, 3usize);
+    let c = make_case(&mut rng, n, k, batch);
+    let w = g.upload_weights(&c.p).unwrap();
+    let x = g.upload_f16(&c.x).unwrap();
+    let res = g.upload_f16(&c.res).unwrap();
+    let mut out = g.alloc_f16(batch * n).unwrap();
+    g.gemm_f16(&w, &x, batch, Some(&res), &mut out, Launch::tensor_core(2))
+        .unwrap();
+    let got = g.download(&out).unwrap();
+    let expect = reference::gemm_f16(&c.p, &c.x, batch, Some(&c.res[..]));
+    let max_ref = expect.iter().copied().map(f32::abs).fold(0f32, f32::max);
+    let max_err = got
+        .iter()
+        .zip(&expect)
+        .map(|(a, b)| (a.to_f32() - b).abs())
+        .fold(0f32, f32::max);
+    assert!(
+        max_err <= 2e-3 * max_ref + 1e-3,
+        "ternary_tc_f16 err {max_err} vs max {max_ref}"
+    );
 }
