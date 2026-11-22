@@ -175,6 +175,10 @@ Measured on this repo's build machine (**CPU only**: Intel Xeon cloud VM, 8 vCPU
 
 Against the previous table below (2.28 / 18.30 / 80.60), that is 2.05× / 1.96× / 3.6×. Dense f32 was not changed (run-to-run 390–470 µs on medium). The default AVX2-only build improved 1.3× on tiny and small and is unchanged on medium. This is not "100×": batch-1 ternary GEMV is bandwidth-bound, and 8× vs fp16 is the theoretical ceiling.
 
+[![CPU Packed2 speedup explainer](docs/media/cpu-speedup-explainer-poster.png)](docs/media/cpu-speedup-explainer.mp4)
+
+38-second explainer of the Packed2 layout, the spin-wait pool and the measured CPU p50 ([video](docs/media/cpu-speedup-explainer.mp4), [GIF](docs/media/cpu-speedup-explainer.gif)). Details: [CPU_PERF](docs/CPU_PERF.md).
+
 Previous run, after the AVX2 activation quantizer and the AVX-512 VNNI dot product landed (same VM, `--features avx512`, pinned to core 3, 20,000 requests per path after 2,000 warm-up; **CPU only**). Raw data: [`results/20261122-162423-cpu-latency-avx512.json`](results/20261122-162423-cpu-latency-avx512.json) (schema-validated; compare runs with `scripts/compare_results.py`).
 
 | model (widths) | path | p50 | p99 | p99.9 | max |
@@ -364,6 +368,7 @@ docs/                     ARCHITECTURE, CPU_PERF, CUDA_EXT, LANGUAGES, LOOPED, R
 scripts/bench.sh          one-shot build + verify + benchmark + measured charts
                           (`--tensor-cores` also times the mma.sync path)
 scripts/make_tensor_core_media.py  explainer video, poster, GIF, report figures
+scripts/make_cpu_speedup_media.py  Packed2 CPU speedup explainer video, poster, GIF
 scripts/latency_cpu.sh    CPU-only latency run (no GPU needed) + charts
 scripts/plot_latency.py   latency CSV -> tail-percentile and histogram charts
 scripts/plot_results.py   bench CSV -> results/*.png ("Measured on <GPU>")

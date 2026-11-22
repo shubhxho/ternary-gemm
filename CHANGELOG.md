@@ -13,6 +13,7 @@ All notable changes are listed here. The format follows
   on the build VM: tiny 2.53 → 1.11 µs, small 20.2 → 9.32 µs, medium 87.7 → 22.3 µs
   (`docs/CPU_PERF.md`).
 * `spin_pool::SpinPool` and `CpuEngine::with_threads`: medium 11.6 µs at 4 threads (measured).
+* Explainer video for the Packed2 CPU speedup: `docs/media/cpu-speedup-explainer.mp4` (`scripts/make_cpu_speedup_media.py`).
 * `latency --threads N --byte-codes --skip-reference`; `bench.sh --ext --cpu-threads N --byte-codes`.
 * `kernels/ternary_ext.cu`: cp.async pipeline (r1/r2/r4), split-K, LUT and warp-specialized
   GEMV kernels with fused act + residual epilogue; `kernels/ternary_gemv.ptx` hand PTX;

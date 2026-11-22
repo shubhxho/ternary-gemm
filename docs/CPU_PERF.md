@@ -7,6 +7,10 @@ README table. The "before" binary was built from `d39d557` (main before this cha
 in the same session, interleaved with the "after" binary, so both sides saw the same machine
 state. The p50 values are medians of two interleaved runs. No GPU numbers appear here.
 
+A 38-second explainer of the layout, the spin-wait pool and these measured p50 figures ([video](media/cpu-speedup-explainer.mp4), [GIF](media/cpu-speedup-explainer.gif)):
+
+[![CPU Packed2 speedup explainer](media/cpu-speedup-explainer-poster.png)](media/cpu-speedup-explainer.mp4)
+
 ## What changed
 
 1. **`Packed2` layout (`src/cpu_packed.rs`).** Rows are grouped in blocks of 16 and K in
