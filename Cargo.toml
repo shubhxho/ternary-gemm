@@ -73,3 +73,7 @@ debug = 1
 [[test]]
 name = "looped_gpu"
 required-features = ["cuda"]
+
+[[bin]]
+name = "autotune"
+required-features = ["cuda"]
