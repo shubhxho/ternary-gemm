@@ -224,12 +224,19 @@ pub struct Modelled {
     pub waves: f64,
     /// Bytes in flight per SM / bytes needed to cover DRAM latency (Little's law), capped at 1.
     pub latency_cover: f64,
-    /// Model score in `[0, 1]` (higher is better); used only to rank / prune.
+    /// Modelled kernel time (us): a ranking device, **not** a prediction to quote.
+    pub t_model_us: f64,
+    /// `1 / t_model_us`, normalised so higher is better; used only to rank / prune.
     pub score: f64,
 }
 
 /// Assumed DRAM latency for the Little's-law term (ns). A model parameter, not a measurement.
 pub const ASSUMED_DRAM_LATENCY_NS: f64 = 600.0;
+/// Assumed L2 : DRAM bandwidth ratio for re-reading activations (L2 bandwidth of consumer parts
+/// is not published). A model parameter.
+pub const ASSUMED_L2_DRAM_RATIO: f64 = 2.5;
+/// Assumed cost of one extra dependent kernel launch on a stream (us). A model parameter.
+pub const ASSUMED_LAUNCH_US: f64 = 2.0;
 
 fn tile_index(batch: usize) -> Option<usize> {
     [1usize, 2, 4, 8, 16].iter().position(|&t| t >= batch)
@@ -279,21 +286,33 @@ pub fn model_config(
     let inflight = active_blocks_per_sm
         * (cfg.warps * cfg.rows_per_warp * BYTES_IN_FLIGHT_PER_WARP_ROW) as f64;
     let latency_cover = (inflight / need).min(1.0);
-    // Tail effect: the last partial wave idles part of the GPU.
-    let tail = if waves >= 1.0 {
+    // SM coverage / tail effect: with fewer blocks than SMs some SMs idle; with more than one
+    // full wave the last partial wave idles part of the GPU.
+    let tail = if waves > 1.0 {
         waves / waves.ceil()
     } else {
-        waves
+        (blocks / sm_count as f64).min(1.0)
     };
-    // Mild preference for more rows per warp (activation reuse in registers) and for fusing
-    // (one launch, no activation round trip), as tie-breakers.
-    let reuse = 1.0 + 0.02 * cfg.rows_per_warp as f64 + if cfg.fused { 0.03 } else { 0.0 };
-    let score = latency_cover * tail * reuse / 1.11;
+    let bw = spec.dram_gbps * 1e9 * (sm_count as f64 / spec.sm_count as f64);
+    let weight_bytes = (n * k) as f64 / 4.0 + 4.0 * n as f64;
+    // The fused kernel re-reads and re-quantizes the fp16 activations in every block (from L2);
+    // the split path reads int8 activations per block but pays one extra launch.
+    let (act_bytes_per_block, launches) = if cfg.fused {
+        ((batch * k * 2) as f64, 1.0)
+    } else {
+        ((batch * k) as f64, 2.0)
+    };
+    let act_bytes = blocks * act_bytes_per_block;
+    let t_model_us = (weight_bytes / bw + act_bytes / (bw * ASSUMED_L2_DRAM_RATIO)) * 1e6
+        / (latency_cover * tail).max(1e-6)
+        + (launches - 1.0) * ASSUMED_LAUNCH_US;
+    let score = 1.0 / t_model_us;
     Some(Modelled {
         config: cfg,
         occupancy: occ,
         waves,
         latency_cover,
+        t_model_us,
         score,
     })
 }
