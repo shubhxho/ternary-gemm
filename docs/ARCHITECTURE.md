@@ -13,7 +13,7 @@
         v                    v                         v                        v
  reference.rs          cpu.rs CpuTernary          gpu.rs (feature cuda)     hw/ (RTL, HLS)
  scalar oracle         SIMD, any batch,           NVRTC kernels, safe       multiplier-free
- (f64-free int math)   threads, bit-exact         launch API, cuBLAS        dot/MAC, same
+ (exact int math)      threads, bit-exact         launch API, cuBLAS        dot/MAC, same
                                                   baseline                  natural layout
         \____________________ all bit-exact on the int8 path ______________________/
                                    |
