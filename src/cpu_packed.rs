@@ -22,6 +22,8 @@ use crate::mlp::Act;
 pub const ROWS: usize = 16;
 /// Weights per 64-byte row chunk.
 pub const CHUNK: usize = 256;
+/// Layers smaller than this many weights run single-threaded even when a pool is attached.
+pub const PAR_MIN_WEIGHTS: usize = 1 << 19;
 
 /// Ternary weights packed for [`gemv`] (see the module docs for the layout).
 #[derive(Debug, Clone)]
@@ -106,6 +108,29 @@ impl Packed2 {
     }
 }
 
+/// Which packed kernel [`gemv`] dispatches to on this CPU.
+pub fn level() -> &'static str {
+    if available() {
+        "avx512-vnni-vbmi"
+    } else if avx2_available() {
+        "avx2"
+    } else {
+        "scalar"
+    }
+}
+
+/// Whether the AVX2 packed kernel can run (used when AVX-512 VNNI/VBMI is missing).
+pub fn avx2_available() -> bool {
+    #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
+    {
+        std::is_x86_feature_detected!("avx2")
+    }
+    #[cfg(not(all(target_arch = "x86_64", feature = "avx2")))]
+    {
+        false
+    }
+}
+
 /// Whether this CPU can run the packed AVX-512 kernels.
 pub fn available() -> bool {
     #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
@@ -131,15 +156,110 @@ pub fn gemv(p: &Packed2, q: &[i8], out: &mut [i32]) {
     #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
     if available() {
         // SAFETY: features detected; lengths checked above.
-        return unsafe { gemv_avx512(p, q, out) };
+        return unsafe { gemv_avx512(p, q, out.as_mut_ptr(), 0..p.blocks) };
+    }
+    #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
+    if avx2_available() {
+        // SAFETY: AVX2 detected; lengths checked above.
+        return unsafe { gemv_avx2(p, q, out) };
     }
     p.gemv_scalar(q, out)
+}
+
+/// [`gemv`] split over a [`SpinPool`](crate::spin_pool::SpinPool): thread `t` of `T` computes a
+/// contiguous range of 16-row blocks. Identical results for any thread count.
+pub fn gemv_parallel(p: &Packed2, q: &[i8], out: &mut [i32], pool: &crate::spin_pool::SpinPool) {
+    assert!(q.len() >= p.q_len(), "q shorter than Packed2::q_len()");
+    assert!(
+        out.len() >= p.n_padded(),
+        "out shorter than Packed2::n_padded()"
+    );
+    #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+    {
+        let t = pool.threads().min(p.blocks);
+        if t > 1 && available() {
+            let per = p.blocks.div_ceil(t);
+            let out = SyncPtr(out.as_mut_ptr());
+            pool.run(|i| {
+                let (b0, b1) = ((i * per).min(p.blocks), ((i + 1) * per).min(p.blocks));
+                if b0 < b1 {
+                    let o = &out;
+                    // SAFETY: features detected (`available()`); each thread writes only the rows
+                    // of its own blocks, inside `out` (length checked above).
+                    unsafe { gemv_avx512(p, q, o.0, b0..b1) };
+                }
+            });
+            return;
+        }
+    }
+    let _ = pool;
+    gemv(p, q, out)
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+struct SyncPtr(*mut i32);
+// SAFETY: used only for disjoint per-thread writes inside `gemv_parallel`.
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+unsafe impl Sync for SyncPtr {}
+
+/// AVX2 form of the same layout: each 64-byte row chunk is two 32-byte halves; half `h` of
+/// sub-vector `p` lines up with `q[64p + 32h..][..32]`. Codes are unpacked with `vpsrlw` +
+/// `vpand`, multiplied with `vpmaddubsw`, and the eight i16 products of a chunk are summed in i16
+/// before one `vpmaddwd` (each product pair is at most 2 * 2 * 128 = 512, so eight sum to at most
+/// 4096: no saturation). Four rows per pass share the activation loads.
+#[cfg(all(target_arch = "x86_64", feature = "avx2"))]
+#[target_feature(enable = "avx2")]
+unsafe fn gemv_avx2(p: &Packed2, q: &[i8], out: &mut [i32]) {
+    use std::arch::x86_64::*;
+    let m3 = _mm256_set1_epi8(3);
+    let ones = _mm256_set1_epi16(1);
+    let parts_last = p.parts_last();
+    let qp = q.as_ptr();
+    // Unpacked codes of sub-vector `part` from a 32-byte half.
+    #[inline(always)]
+    unsafe fn sub(v: __m256i, part: usize, m3: __m256i) -> __m256i {
+        match part {
+            0 => _mm256_and_si256(v, m3),
+            1 => _mm256_and_si256(_mm256_srli_epi16(v, 2), m3),
+            2 => _mm256_and_si256(_mm256_srli_epi16(v, 4), m3),
+            _ => _mm256_and_si256(_mm256_srli_epi16(v, 6), m3),
+        }
+    }
+    for b in 0..p.blocks {
+        let base = p.data.as_ptr().add(b * p.chunks * ROWS * 64);
+        for r0 in (0..ROWS).step_by(4) {
+            let mut acc = [_mm256_setzero_si256(); 4];
+            for ch in 0..p.chunks {
+                let wp = base.add(ch * ROWS * 64);
+                let qc = qp.add(ch * CHUNK);
+                let parts = if ch + 1 == p.chunks { parts_last } else { 4 };
+                for j in 0..4 {
+                    let row = wp.add((r0 + j) * 64);
+                    let mut s16 = _mm256_setzero_si256();
+                    for h in 0..2 {
+                        let v = _mm256_loadu_si256(row.add(32 * h) as *const __m256i);
+                        for part in 0..parts {
+                            let qv =
+                                _mm256_loadu_si256(qc.add(64 * part + 32 * h) as *const __m256i);
+                            s16 = _mm256_add_epi16(s16, _mm256_maddubs_epi16(sub(v, part, m3), qv));
+                        }
+                    }
+                    acc[j] = _mm256_add_epi32(acc[j], _mm256_madd_epi16(s16, ones));
+                }
+            }
+            let a01 = _mm256_hadd_epi32(acc[0], acc[1]);
+            let a23 = _mm256_hadd_epi32(acc[2], acc[3]);
+            let a = _mm256_hadd_epi32(a01, a23);
+            let h = _mm_add_epi32(_mm256_castsi256_si128(a), _mm256_extracti128_si256(a, 1));
+            _mm_storeu_si128(out.as_mut_ptr().add(b * ROWS + r0) as *mut __m128i, h);
+        }
+    }
 }
 
 #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
 #[target_feature(enable = "avx512f,avx512bw,avx512vnni,avx512vbmi")]
 #[clippy::msrv = "1.89"]
-unsafe fn gemv_avx512(p: &Packed2, q: &[i8], out: &mut [i32]) {
+unsafe fn gemv_avx512(p: &Packed2, q: &[i8], out: *mut i32, blocks: std::ops::Range<usize>) {
     use std::arch::x86_64::*;
     // vpmultishiftqb control: output byte j of each qword takes bits [8j + s, 8j + s + 8).
     let ctl = |s: u64| {
@@ -153,7 +273,7 @@ unsafe fn gemv_avx512(p: &Packed2, q: &[i8], out: &mut [i32]) {
     let m3 = _mm512_set1_epi8(3);
     let parts_last = p.parts_last();
     let qp = q.as_ptr();
-    for b in 0..p.blocks {
+    for b in blocks {
         let mut acc = [_mm512_setzero_si512(); ROWS];
         let base = p.data.as_ptr().add(b * p.chunks * ROWS * 64);
         for ch in 0..p.chunks {
@@ -203,7 +323,7 @@ unsafe fn gemv_avx512(p: &Packed2, q: &[i8], out: &mut [i32]) {
                 }
             }
         }
-        _mm512_storeu_si512(out.as_mut_ptr().add(b * ROWS) as *mut _, reduce16(&acc));
+        _mm512_storeu_si512(out.add(b * ROWS) as *mut _, reduce16(&acc));
     }
 }
 
@@ -279,9 +399,56 @@ pub fn epilogue(
         // SAFETY: AVX-512F detected; lengths checked above.
         return unsafe { epilogue_avx512(acc, sum_q, s, scale, bias, a, dst) };
     }
-    for r in 0..n {
+    #[allow(unused_mut)]
+    let mut r0 = 0;
+    #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
+    if avx2_available() {
+        // SAFETY: AVX2 detected; lengths checked above.
+        r0 = unsafe { epilogue_avx2(acc, sum_q, s, scale, bias, a, dst) };
+    }
+    for r in r0..n {
         dst[r] = epilogue_scalar(acc[r], sum_q, s, scale[r], bias[r], a);
     }
+}
+
+/// 8-lane AVX2 epilogue over the first `n - n % 8` rows; returns how many rows it wrote.
+#[cfg(all(target_arch = "x86_64", feature = "avx2"))]
+#[target_feature(enable = "avx2")]
+unsafe fn epilogue_avx2(
+    acc: &[i32],
+    sum_q: i32,
+    s: f32,
+    scale: &[f32],
+    bias: &[f32],
+    a: Act,
+    dst: &mut [f32],
+) -> usize {
+    use std::arch::x86_64::*;
+    let n = dst.len() / 8 * 8;
+    let (sq, sv, zero) = (
+        _mm256_set1_epi32(sum_q),
+        _mm256_set1_ps(s),
+        _mm256_setzero_ps(),
+    );
+    let mut i = 0;
+    while i < n {
+        let x = _mm256_loadu_si256(acc.as_ptr().add(i) as *const __m256i);
+        let mut v = _mm256_cvtepi32_ps(_mm256_sub_epi32(x, sq));
+        v = _mm256_div_ps(v, sv);
+        v = _mm256_mul_ps(v, _mm256_loadu_ps(scale.as_ptr().add(i)));
+        v = _mm256_add_ps(v, _mm256_loadu_ps(bias.as_ptr().add(i)));
+        v = match a {
+            Act::Identity => v,
+            Act::Relu => _mm256_max_ps(v, zero),
+            Act::Relu2 => {
+                let r = _mm256_max_ps(v, zero);
+                _mm256_mul_ps(r, r)
+            }
+        };
+        _mm256_storeu_ps(dst.as_mut_ptr().add(i), v);
+        i += 8;
+    }
+    n
 }
 
 #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
@@ -365,6 +532,24 @@ mod tests {
                     .sum();
                 assert_eq!(slow[r], want, "scalar {n}x{k} row {r}");
                 assert_eq!(fast[r], want, "simd {n}x{k} row {r}");
+            }
+        }
+    }
+
+    #[test]
+    fn parallel_gemv_matches_serial() {
+        let mut rng = StdRng::seed_from_u64(11);
+        for threads in [1usize, 2, 3, 8] {
+            let pool = crate::spin_pool::SpinPool::new(threads);
+            for &(n, k) in &[(4, 64), (40, 512), (1024, 1024), (100, 336)] {
+                let w: Vec<i8> = (0..n * k).map(|_| rng.random_range(-1i8..=1)).collect();
+                let p = Packed2::from_ternary(&w, n, k);
+                let q: Vec<i8> = (0..p.q_len()).map(|_| rng.random()).collect();
+                let mut a = vec![0; p.n_padded()];
+                let mut b = vec![0; p.n_padded()];
+                gemv(&p, &q, &mut a);
+                gemv_parallel(&p, &q, &mut b, &pool);
+                assert_eq!(a, b, "{n}x{k} t{threads}");
             }
         }
     }
