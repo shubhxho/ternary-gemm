@@ -9,7 +9,10 @@
 //! Features are SYNTHETIC random vectors and the models are random (untrained): this measures
 //! latency only, nothing about trading performance.
 //!
-//! usage: latency [--iters N] [--warmup N] [--models tiny,small,medium] [--csv FILE] [--cpu-only]
+//! usage: latency [--iters N] [--warmup N] [--models tiny,small,medium] [--csv FILE] [--cpu-only] [--energy]
+//!
+//! `--energy` also measures energy per inference for the CPU paths with RAPL (and NVML with the
+//! `nvml` feature); it prints "unavailable" when the host exposes no counters.
 
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use std::cell::RefCell;
@@ -35,6 +38,7 @@ struct Opts {
     models: Vec<String>,
     csv: Option<String>,
     cpu_only: bool,
+    energy: bool,
 }
 
 fn parse() -> Opts {
@@ -44,6 +48,7 @@ fn parse() -> Opts {
         models: MODELS.iter().map(|m| m.0.to_string()).collect(),
         csv: None,
         cpu_only: false,
+        energy: false,
     };
     let a: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -56,6 +61,11 @@ fn parse() -> Opts {
             "--csv" => o.csv = Some(v),
             "--cpu-only" => {
                 o.cpu_only = true;
+                i += 1;
+                continue;
+            }
+            "--energy" => {
+                o.energy = true;
                 i += 1;
                 continue;
             }
@@ -153,7 +163,22 @@ fn bits(v: &[f32]) -> Vec<u32> {
     v.iter().map(|x| x.to_bits()).collect()
 }
 
+fn energy_row(model: &str, path: &str, r: &ternary_gemm::energy::EnergyReport) -> String {
+    match (r.joules_per_iter(), r.iters_per_joule(), r.avg_watts()) {
+        (Some(j), Some(ipj), Some(w)) => format!(
+            "| {model} | {path} | {:.3e} | {ipj:.0} | {w:.1} | {:.2} |",
+            j, r.seconds
+        ),
+        _ => format!(
+            "| {model} | {path} | unavailable | unavailable | unavailable | {:.2} |",
+            r.seconds
+        ),
+    }
+}
+
 fn main() {
+    let meter = ternary_gemm::energy::EnergyMeter::open();
+    let mut energy_rows: Vec<String> = Vec::new();
     let o = parse();
     let cpu = cpu_model();
     let gpu = if o.cpu_only {
@@ -187,6 +212,7 @@ fn main() {
                 models: vec![],
                 csv: None,
                 cpu_only: true,
+                energy: false,
             },
             |_| {},
         );
@@ -231,6 +257,20 @@ fn main() {
             std::hint::black_box(&out);
         });
         report(&label, "CPU ternary SIMD (CpuEngine)", &cpu_dev, us);
+        if o.energy {
+            let iters = o.iters as u64;
+            let r = meter.measure(iters, || {
+                eng.forward_into(&pool[0], &mut out);
+                std::hint::black_box(&out);
+            });
+            energy_rows.push(energy_row(&label, "CPU ternary SIMD (CpuEngine)", &r));
+            let mut dense_e = DenseF32Mlp::new(&m);
+            let r = meter.measure(iters, || {
+                dense_e.forward_into(&pool[0], &mut out);
+                std::hint::black_box(&out);
+            });
+            energy_rows.push(energy_row(&label, "CPU dense f32 SIMD", &r));
+        }
 
         let mut dense = DenseF32Mlp::new(&m);
         let us = time_each(&o, |i| {
@@ -314,6 +354,19 @@ fn main() {
                 c.graph_error
             ),
             Err(err) => println!("| {label} | GPU cuBLAS FP16 | n/a ({err}) | | | | | | |"),
+        }
+    }
+    if o.energy {
+        println!(
+            "\n## Energy (measured hardware counters: {})\n",
+            meter.describe()
+        );
+        println!("| model | path | J / inference | inferences / J | avg W | wall s |\n|---|---|---|---|---|---|");
+        for r in &energy_rows {
+            println!("{r}");
+        }
+        if meter.describe() == "none" {
+            println!("\nNo RAPL / NVML counters are readable on this host (VMs and containers usually hide them; RAPL often needs root). Energy NOT MEASURED.");
         }
     }
     if let Some(path) = &o.csv {
