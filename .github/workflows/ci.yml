@@ -187,3 +187,17 @@ jobs:
       - name: pytest
         working-directory: bindings/python/tests
         run: python -m pytest -q
+
+  package:
+    name: cargo package (crate tarball builds standalone)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo package --locked
+      - name: No submodule / hardware / bindings files in the tarball
+        run: |
+          ! cargo package --list --locked | grep -E '^(third_party|hw|bindings|fuzz|results)/'
