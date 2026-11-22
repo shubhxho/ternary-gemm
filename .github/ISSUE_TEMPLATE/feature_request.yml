@@ -1,0 +1,15 @@
+name: Feature request
+description: New kernel, shape, backend or tooling
+labels: [enhancement]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What do you need and why?
+    validations:
+      required: true
+  - type: textarea
+    id: verify
+    attributes:
+      label: How could it be verified?
+      description: Reference to match, shapes to test, hardware to benchmark on.

@@ -1,0 +1,24 @@
+name: Bug report
+description: Wrong results, crashes, build failures
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: Include the command you ran and the full error / mismatch output.
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU and driver (or "CPU only")
+      placeholder: "RTX 5060, driver 575.xx, CUDA 12.8"
+  - type: input
+    id: rust
+    attributes:
+      label: rustc --version
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction (shape N x K, batch, kernel / engine)
