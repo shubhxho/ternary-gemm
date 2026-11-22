@@ -453,6 +453,9 @@ pub fn causal_attention(
 ) -> Vec<f16> {
     let d = heads * hd;
     let scale = 1.0 / (hd as f32).sqrt();
+    // Widen once (fp16 -> f32) instead of per dot product.
+    let to32 = |v: &[f16]| -> Vec<f32> { v.iter().map(|x| x.to_f32()).collect() };
+    let (q, k, v) = (to32(q), to32(k), to32(v));
     let mut out = vec![f16::ZERO; tokens * d];
     let mut p = vec![0f32; tokens];
     let mut acc = vec![0f32; hd];
@@ -463,11 +466,7 @@ pub fn causal_attention(
             let mut mx = f32::NEG_INFINITY;
             for j in 0..=i {
                 let kj = &k[j * d + off..j * d + off + hd];
-                let s: f32 = qi
-                    .iter()
-                    .zip(kj)
-                    .map(|(a, b)| a.to_f32() * b.to_f32())
-                    .sum();
+                let s: f32 = qi.iter().zip(kj).map(|(a, b)| a * b).sum();
                 p[j] = s * scale;
                 mx = mx.max(p[j]);
             }
@@ -480,7 +479,7 @@ pub fn causal_attention(
             for j in 0..=i {
                 let w = p[j] / z;
                 for (a, vv) in acc.iter_mut().zip(&v[j * d + off..j * d + off + hd]) {
-                    *a += w * vv.to_f32();
+                    *a += w * vv;
                 }
             }
             for (o, a) in out[i * d + off..i * d + off + hd].iter_mut().zip(&acc) {
