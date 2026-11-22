@@ -88,7 +88,16 @@ pub struct TernaryMlp {
 }
 
 /// Per-token int8 quantization exactly as the kernels do it. Returns `(s, sum_q)`.
+///
+/// Dispatches to AVX2 (8 lanes, `vroundps` nearest-even) or SSE4.1 when available; every path is
+/// bit-identical to [`quantize_scalar`], which the reference forward pass uses as the oracle.
 pub fn quantize_into(x: &[f32], q: &mut [i8]) -> (f32, i32) {
+    assert!(q.len() >= x.len(), "q too short");
+    #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
+    if std::is_x86_feature_detected!("avx2") {
+        // SAFETY: AVX2 detected; lengths checked above.
+        return unsafe { quantize_avx2(x, q) };
+    }
     #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
     if std::is_x86_feature_detected!("sse4.1") {
         // SAFETY: SSE4.1 detected (gives an inline round-to-nearest-even instead of a libm call).
@@ -101,6 +110,71 @@ pub fn quantize_into(x: &[f32], q: &mut [i8]) -> (f32, i32) {
 #[target_feature(enable = "sse4.1")]
 unsafe fn quantize_sse41(x: &[f32], q: &mut [i8]) -> (f32, i32) {
     quantize_generic(x, q)
+}
+
+/// Scalar quantization: the oracle every SIMD variant must match bit for bit.
+pub fn quantize_scalar(x: &[f32], q: &mut [i8]) -> (f32, i32) {
+    quantize_generic(x, q)
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "avx2"))]
+#[target_feature(enable = "avx2")]
+unsafe fn quantize_avx2(x: &[f32], q: &mut [i8]) -> (f32, i32) {
+    use std::arch::x86_64::*;
+    let n = x.len();
+    let p = x.as_ptr();
+    let abs_mask = _mm256_castsi256_ps(_mm256_set1_epi32(0x7fff_ffff));
+    let mut mv = _mm256_setzero_ps();
+    let mut i = 0;
+    while i + 8 <= n {
+        mv = _mm256_max_ps(mv, _mm256_and_ps(_mm256_loadu_ps(p.add(i)), abs_mask));
+        i += 8;
+    }
+    let mut lanes = [0f32; 8];
+    _mm256_storeu_ps(lanes.as_mut_ptr(), mv);
+    let mut m = 0.0f32;
+    for v in lanes {
+        m = m.max(v);
+    }
+    for v in &x[i..] {
+        m = m.max(v.abs());
+    }
+    let s = 127.0f32 / m.max(1e-5);
+    let sv = _mm256_set1_ps(s);
+    let (lo, hi) = (_mm256_set1_ps(-128.0), _mm256_set1_ps(127.0));
+    let conv = |j: usize| {
+        let t = _mm256_round_ps(
+            _mm256_mul_ps(_mm256_loadu_ps(p.add(j)), sv),
+            _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC,
+        );
+        _mm256_cvtps_epi32(_mm256_min_ps(_mm256_max_ps(t, lo), hi))
+    };
+    let mut sum = _mm256_setzero_si256();
+    let perm = _mm256_setr_epi32(0, 4, 1, 5, 2, 6, 3, 7);
+    let qp = q.as_mut_ptr();
+    let mut j = 0;
+    while j + 32 <= n {
+        let (a, b, c, d) = (conv(j), conv(j + 8), conv(j + 16), conv(j + 24));
+        sum = _mm256_add_epi32(
+            sum,
+            _mm256_add_epi32(_mm256_add_epi32(a, b), _mm256_add_epi32(c, d)),
+        );
+        let bytes = _mm256_packs_epi16(_mm256_packs_epi32(a, b), _mm256_packs_epi32(c, d));
+        _mm256_storeu_si256(
+            qp.add(j) as *mut __m256i,
+            _mm256_permutevar8x32_epi32(bytes, perm),
+        );
+        j += 32;
+    }
+    let mut parts = [0i32; 8];
+    _mm256_storeu_si256(parts.as_mut_ptr() as *mut __m256i, sum);
+    let mut total: i32 = parts.iter().sum();
+    for k in j..n {
+        let t = (x[k] * s).round_ties_even().clamp(-128.0, 127.0) as i32;
+        total += t;
+        q[k] = t as i8;
+    }
+    (s, total)
 }
 
 #[inline(always)]
@@ -234,7 +308,7 @@ impl TernaryMlp {
         let mut cur = x.to_vec();
         for l in &self.layers {
             let mut q = vec![0i8; l.k];
-            let (s, _sum) = quantize_into(&cur, &mut q);
+            let (s, _sum) = quantize_scalar(&cur, &mut q);
             let mut out = vec![0f32; l.n];
             for r in 0..l.n {
                 let mut acc = 0i32;
