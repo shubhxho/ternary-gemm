@@ -64,3 +64,24 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo doc --no-deps --lib
+
+  nvrtc:
+    name: NVRTC + ptxas compile check (sm_80..sm_120)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # NVRTC and ptxas from NVIDIA's pip wheels: no CUDA toolkit or GPU needed.
+      - name: Install NVRTC 12.8 + ptxas
+        run: |
+          python -m pip install --quiet "nvidia-cuda-nvrtc-cu12==12.8.*" "nvidia-cuda-nvcc-cu12==12.8.*"
+          NV=$(python -c "import nvidia, os; print(os.path.dirname(nvidia.__path__[0]) + '/nvidia')")
+          echo "LD_LIBRARY_PATH=$NV/cuda_nvrtc/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+          echo "PTXAS=$NV/cuda_nvcc/bin/ptxas" >> "$GITHUB_ENV"
+      - run: cargo run --release --bin compile_check
