@@ -261,9 +261,13 @@ impl LoopedTransformer {
         Self::new(block, adapter, cfg)
     }
 
-    /// Unique weight bytes held in memory (one block + adapter).
+    /// Unique parameter bytes held in memory (one block + adapter, weights and scales).
     pub fn unique_weight_bytes(&self) -> usize {
-        self.block.weight_bytes() + self.adapter.as_ref().map_or(0, |a| a.weight_bytes())
+        self.block.weight_bytes()
+            + self
+                .adapter
+                .as_ref()
+                .map_or(0, |a| a.weight_bytes() + 4 * a.row_scale.len())
     }
 
     /// Weight bytes an unrolled (non-shared) model of the same effective depth would need.
