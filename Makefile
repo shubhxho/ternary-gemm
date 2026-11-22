@@ -2,7 +2,7 @@
 CARGO ?= cargo
 PY ?= python3
 
-.PHONY: all check fmt fmt-check clippy test doc compile-check latency-cpu bench hooks deny msrv clean
+.PHONY: all check fmt fmt-check clippy test doc compile-check latency-cpu bench hooks deny msrv fuzz clean
 
 all: check
 
@@ -44,6 +44,9 @@ msrv:
 hooks:
 	git config core.hooksPath scripts/hooks
 	@echo "pre-commit hook installed (scripts/hooks/pre-commit)"
+
+fuzz: ## run every fuzz target for FUZZ_SECS (default 60) seconds (nightly + cargo-fuzz)
+	cd fuzz && for t in tgm_parse pack_roundtrip quantize_simd; do cargo +nightly fuzz run $$t -- -max_total_time=$${FUZZ_SECS:-60} || exit 1; done
 
 clean:
 	$(CARGO) clean
