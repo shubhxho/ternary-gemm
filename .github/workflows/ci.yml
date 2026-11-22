@@ -103,3 +103,17 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
+
+  python-lint:
+    name: ruff (scripts)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: astral-sh/ruff-action@v3
+        with:
+          args: check scripts
+      - uses: astral-sh/ruff-action@v3
+        with:
+          args: format --check scripts
