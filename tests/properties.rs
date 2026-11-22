@@ -55,6 +55,25 @@ proptest! {
         prop_assert_eq!(q2, q);
     }
 
+    /// The fast CPU activation quantizer is bit-identical to the reference, with and without RMSNorm.
+    #[test]
+    fn fast_quantize_acts_bit_exact(
+        x in proptest::collection::vec(-6e4f32..6e4, 1..400),
+        batch in 1usize..4,
+        g in 0.01f32..4.0,
+    ) {
+        let k = x.len() / batch;
+        prop_assume!(k > 0);
+        let xs: Vec<f16> = x[..batch * k].iter().map(|&v| f16::from_f32(v)).collect();
+        let gamma: Vec<f16> = (0..k).map(|i| f16::from_f32(g + i as f32 * 1e-3)).collect();
+        for gm in [None, Some(&gamma[..])] {
+            prop_assert_eq!(
+                ternary_gemm::cpu::quantize_acts(&xs, batch, k, gm, 1e-5),
+                quantize_acts(&xs, batch, k, gm, 1e-5)
+            );
+        }
+    }
+
     /// Reference GEMM equals an independent dense i32 GEMM with the same epilogue, and the CPU
     /// backend equals the reference.
     #[test]

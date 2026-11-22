@@ -43,3 +43,30 @@ fn cpu_gemm_bit_exact_any_batch_and_threads() {
         }
     }
 }
+
+#[test]
+fn fast_quantize_matches_reference() {
+    use half::f16;
+    use rand::{rngs::StdRng, Rng, SeedableRng};
+    let mut rng = StdRng::seed_from_u64(77);
+    for &(batch, k) in &[(1usize, 64usize), (3, 100), (16, 2560), (5, 1024), (2, 7)] {
+        for scale in [1e-6f32, 1.0, 300.0] {
+            let x: Vec<f16> = (0..batch * k)
+                .map(|_| f16::from_f32(rng.random_range(-1.0f32..1.0) * scale))
+                .collect();
+            let g: Vec<f16> = (0..k)
+                .map(|_| f16::from_f32(rng.random_range(0.1f32..2.0)))
+                .collect();
+            for gamma in [None, Some(&g[..])] {
+                let want = ternary_gemm::reference::quantize_acts(&x, batch, k, gamma, 1e-5);
+                let got = ternary_gemm::cpu::quantize_acts(&x, batch, k, gamma, 1e-5);
+                assert_eq!(
+                    got,
+                    want,
+                    "batch={batch} k={k} scale={scale} gamma={}",
+                    gamma.is_some()
+                );
+            }
+        }
+    }
+}
