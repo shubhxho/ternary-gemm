@@ -33,7 +33,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 # dynamic-loading: no CUDA toolkit needed at build time; libcuda / libnvrtc / libcublas are dlopen'ed at runtime.
 cudarc = { version = "0.19", optional = true, default-features = false, features = ["std", "cuda-12080", "dynamic-loading", "driver", "nvrtc", "cublas", "f16"] }
 half = "2"
-safetensors = { version = "0.6", optional = true }
+safetensors = { version = "0.8", optional = true }
 libloading = { version = "0.9", optional = true }
 rand = "0.9"
 
