@@ -40,3 +40,14 @@ jobs:
       # No GPU on hosted runners: GPU tests print SKIPPED and pass; CPU reference,
       # kernel emulation and signal-model tests run for real.
       - run: cargo test --release --all-targets
+
+  msrv:
+    name: MSRV (1.88)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@1.88
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --all-targets --locked
