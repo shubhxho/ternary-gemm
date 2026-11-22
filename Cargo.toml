@@ -104,6 +104,10 @@ required-features = ["cuda"]
 name = "nvrtc_sm120"
 required-features = ["cuda"]
 
+[[example]]
+name = "bench_ext"
+required-features = ["cuda"]
+
 [[test]]
 name = "gpu_ext"
 required-features = ["cuda"]
