@@ -2,7 +2,7 @@
 name = "ternary-gemm"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.87"
+rust-version = "1.88"
 description = "Fused ternary (BitNet b1.58-style) kernels in Rust + CUDA: W2A8/W2A16 GEMV/GEMM for LLM decode, and a latency-first batch-1 path for small signal models"
 license = "MIT"
 repository = "https://github.com/shubhxho/ternary-gemm"
