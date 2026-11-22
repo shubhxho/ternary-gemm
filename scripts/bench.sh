@@ -77,6 +77,14 @@ if CHARTS=$($PY scripts/plot_results.py "$STEM.csv"); then
 else
   echo "(chart generation failed; the Markdown and CSV results are still in results/)"
 fi
+say "Autotune launch configs for this GPU -> $STEM-autotune.{md,csv}"
+# Tuning cache per machine (gitignored); the per-run CSV/MD is the recorded result.
+./target/release/autotune --out "$STEM-autotune" --cache results/tune-cache.csv
+CC=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -1)
+if [ "$CC" = "12.0" ]; then
+  echo "Blackwell sm_120 (RTX 50-series) detected: autotune results recorded in $STEM-autotune.md"
+fi
+
 say "Signal-model latency (batch 1, host -> signal -> host) -> $STEM-latency.md"
 PIN=(); command -v taskset >/dev/null && PIN=(taskset -c "${PIN_CORE:-2}")
 "${PIN[@]}" ./target/release/latency --csv "$STEM-latency.csv" ${LATENCY_ARGS:-} | tee "$STEM-latency.md"

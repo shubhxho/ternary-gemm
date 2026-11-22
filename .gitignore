@@ -7,3 +7,4 @@ results/*.tmp
 /fuzz/artifacts
 /fuzz/coverage
 /fuzz/Cargo.lock
+results/tune-cache.csv
