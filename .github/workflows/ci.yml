@@ -30,6 +30,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo clippy --all-targets --no-default-features -- -D warnings
 
   test:
     name: test (${{ matrix.os }})
@@ -49,6 +50,8 @@ jobs:
       - run: cargo test --release --all-targets
       - name: CPU-only build (no cuda feature)
         run: cargo test --release --no-default-features
+      - name: Portable code paths (no SIMD feature)
+        run: cargo test --release --no-default-features --test mlp --test cpu_reference
 
   msrv:
     name: MSRV (1.88)
