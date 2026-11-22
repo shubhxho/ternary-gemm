@@ -15,6 +15,7 @@ categories = ["science", "hardware-support"]
 cudarc = { version = "0.19", optional = true, default-features = false, features = ["std", "cuda-12080", "dynamic-loading", "driver", "nvrtc", "cublas", "f16"] }
 half = "2"
 safetensors = { version = "0.6", optional = true }
+libloading = { version = "0.9", optional = true }
 rand = "0.9"
 
 [dev-dependencies]
@@ -38,6 +39,8 @@ avx2 = []
 avx512 = ["avx2"]
 # safetensors -> .tgm converter (src/convert.rs, `convert` binary).
 convert = ["dep:safetensors"]
+# GPU energy via NVML (dlopen at runtime).
+nvml = ["dep:libloading"]
 
 [[bin]]
 name = "bench"

@@ -682,6 +682,7 @@ dependencies = [
  "criterion",
  "cudarc",
  "half",
+ "libloading",
  "proptest",
  "rand 0.9.5",
  "safetensors",

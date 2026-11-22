@@ -8,6 +8,7 @@
 //! * [`gpu`] (feature `cuda`, default): NVRTC-compiled CUDA kernels with a safe launch API, plus a cuBLAS FP16 baseline.
 //! * [`convert`] (feature `convert`): safetensors -> `.tgm` (absmean ternarization).
 //! * [`cpu`]: CPU W2A8 GEMM backend (no-GPU fallback, any batch, threaded), bit-exact.
+//! * [`energy`]: measured energy via RAPL (CPU) and NVML (GPU, feature `nvml`), per-inference joules.
 //! * [`format`](mod@format): the `.tgm` container for converted ternary models.
 //! * [`looped`]: a weight-shared, recurrent-depth ternary transformer (CPU + GPU backends).
 //! * [`mlp`]: small ternary MLPs (signal models): CPU reference, allocation-free SIMD CPU engine.
@@ -23,6 +24,7 @@ pub mod autotune;
 #[cfg(feature = "convert")]
 pub mod convert;
 pub mod cpu;
+pub mod energy;
 pub mod format;
 #[cfg(feature = "cuda")]
 pub mod gpu;
