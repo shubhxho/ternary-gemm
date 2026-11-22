@@ -31,6 +31,7 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo clippy --all-targets --no-default-features -- -D warnings
+      - run: cargo clippy --all-targets --features avx512 -- -D warnings
 
   test:
     name: test (${{ matrix.os }})
@@ -48,6 +49,8 @@ jobs:
       # No GPU on hosted runners: GPU tests print SKIPPED and pass; CPU reference,
       # kernel emulation and signal-model tests run for real.
       - run: cargo test --release --all-targets
+      - name: AVX-512 VNNI path (runtime-detected; exercised only on runners that have it)
+        run: cargo test --release --features avx512 --test mlp -- --nocapture
       - name: CPU-only build with SIMD (no cuda feature)
         run: cargo test --release --no-default-features --features avx2
       - name: CPU-only, portable code paths (no SIMD feature)
