@@ -38,6 +38,7 @@ pub mod reference;
 pub mod results;
 #[cfg(feature = "cuda")]
 pub mod signal;
+pub mod spin_pool;
 pub mod tensor_core;
 pub mod tuning;
 
