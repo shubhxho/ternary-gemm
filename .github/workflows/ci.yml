@@ -33,6 +33,7 @@ jobs:
       - run: cargo clippy --all-targets --no-default-features -- -D warnings
       - run: cargo clippy --all-targets --features avx512 -- -D warnings
       - run: cargo clippy --all-targets --features convert -- -D warnings
+      - run: cargo clippy --all-targets --features nvml -- -D warnings
 
   test:
     name: test (${{ matrix.os }})
