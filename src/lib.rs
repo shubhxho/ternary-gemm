@@ -4,7 +4,7 @@
 //! NVIDIA GPUs (sm_61+, tuned with sm_80..sm_120 in mind), driven from Rust via `cudarc`.
 //!
 //! * [`pack`]: absmean weight quantization and the 2-bit packed layouts.
-//! * [`reference`]: pure-Rust CPU reference (correctness oracle).
+//! * [`reference`](mod@reference): pure-Rust CPU reference (correctness oracle).
 //! * [`gpu`]: NVRTC-compiled CUDA kernels with a safe launch API, plus a cuBLAS FP16 baseline.
 //! * [`mlp`]: small ternary MLPs (signal models): CPU reference, allocation-free SIMD CPU engine.
 //! * [`signal`]: latency-first GPU engines for those models (CUDA graph + pinned memory, and an
