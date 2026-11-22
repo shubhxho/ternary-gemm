@@ -9,6 +9,25 @@ repository = "https://github.com/shubhxho/ternary-gemm"
 readme = "README.md"
 keywords = ["cuda", "bitnet", "ternary", "llm", "gemv"]
 categories = ["science", "hardware-support"]
+documentation = "https://docs.rs/ternary-gemm"
+# Ship the library, kernels, examples, benches and tests; keep the kernel submodule, hardware,
+# bindings, fuzzing, results and CI files out of the crate tarball.
+include = [
+    "/src/**",
+    "/kernels/**",
+    "/examples/**",
+    "/benches/**",
+    "/tests/**",
+    "/README.md",
+    "/LICENSE*",
+    "/CHANGELOG.md",
+]
+
+[package.metadata.docs.rs]
+# docs.rs has no GPU or CUDA toolkit; cudarc's dynamic loading means the cuda feature still
+# builds and documents fine. nvml is dlopen-based too.
+features = ["cuda", "avx2", "avx512", "convert", "nvml"]
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 # dynamic-loading: no CUDA toolkit needed at build time; libcuda / libnvrtc / libcublas are dlopen'ed at runtime.
