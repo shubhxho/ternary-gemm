@@ -11,6 +11,7 @@
 //! * [`format`](mod@format): the `.tgm` container for converted ternary models.
 //! * [`looped`]: a weight-shared, recurrent-depth ternary transformer (CPU + GPU backends).
 //! * [`mlp`]: small ternary MLPs (signal models): CPU reference, allocation-free SIMD CPU engine.
+//! * [`tuning`]: per-architecture profiles (RTX 5090 / sm_120 first), occupancy + roofline model.
 //! * [`signal`] (feature `cuda`): latency-first GPU engines for those models (CUDA graph + pinned memory, and an
 //!   experimental persistent kernel), plus a cuBLAS FP16 baseline.
 
@@ -28,5 +29,6 @@ pub mod pack;
 pub mod reference;
 #[cfg(feature = "cuda")]
 pub mod signal;
+pub mod tuning;
 
 pub use pack::{quantize_absmean, PackedTernary};
