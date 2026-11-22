@@ -1,7 +1,7 @@
 //! Autotune the W2A8 kernels on this GPU for BitNet-b1.58-2B decode shapes and record the results.
 //!
-//! Usage: cargo run --release --bin autotune -- [--out results/<stem>-autotune] [--batches 1,4,16]
-//!        [--top 8] [--cache tune-cache.csv]
+//! Usage: `cargo run --release --bin autotune -- [--out results/<stem>-autotune] [--batches 1,4,16]
+//!        [--top 8] [--cache tune-cache.csv]`
 //!
 //! Writes `<out>.csv` (machine-readable, also usable as a cache) and `<out>.md` (report with the
 //! model's projection next to each measurement). Needs a CUDA GPU; refuses to run without one.
