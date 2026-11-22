@@ -111,6 +111,18 @@ pub fn compile(arch: &str) -> Result<Ptx> {
     compile_src(KERNEL_SOURCE, arch, "ternary.cu")
 }
 
+/// Compile the extra batch-1 GEMV kernels ([`crate::cuda_ext`]: cp.async pipeline, split-K, LUT,
+/// warp-specialized) to PTX. `arch` must be sm_80+ / compute_80+ (`cp.async`).
+pub fn compile_ext(arch: &str) -> Result<Ptx> {
+    if !crate::tensor_core::arch_has_mma(arch) {
+        return Err(Error::Compile(format!(
+            "extra GEMV kernels require sm_80+ (cp.async); got {arch}"
+        )));
+    }
+    nvrtc_present()?;
+    compile_src(crate::cuda_ext::EXT_SOURCE, arch, "ternary_ext.cu")
+}
+
 /// Compile the tensor-core kernels to PTX. `arch` must be sm_80+ / compute_80+ (`mma.sync`).
 pub fn compile_tensor_cores(arch: &str) -> Result<Ptx> {
     if !crate::tensor_core::arch_has_mma(arch) {
@@ -158,6 +170,19 @@ pub struct GpuActs {
 }
 
 /// Selectable GEMM/GEMV backend.
+/// Which extra batch-1 kernel [`Gpu::gemv_ext`] launches (see `kernels/ternary_ext.cu`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ExtKernel {
+    /// 4-stage cp.async weight pipeline per warp; `rows_per_warp` in {1, 2, 4}.
+    CpAsync { rows_per_warp: u32 },
+    /// Split-K with int32 atomics + finalize; `splits = 0` picks [`crate::cuda_ext::splitk_factor`].
+    SplitK { splits: u32 },
+    /// T-MAC style table lookup (natural layout).
+    Lut,
+    /// 1 producer warp (cp.async) + 4 consumer warps, named-barrier ring.
+    WarpSpecialized,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Backend {
     /// Existing `dp4a` kernels (sm_61+). Permuted 2-bit layout, optional fused quantize.
@@ -205,6 +230,7 @@ pub struct Gpu {
     pub stream: Arc<CudaStream>,
     _module: Arc<CudaModule>,
     _tc_module: Option<Arc<CudaModule>>,
+    _ext_module: Option<Arc<CudaModule>>,
     funcs: HashMap<String, CudaFunction>,
     pub info: DeviceInfo,
 }
@@ -318,6 +344,17 @@ impl Gpu {
             }
             tc_module = Some(tc);
         }
+        let mut ext_module = None;
+        if (maj, min) >= (8, 0) {
+            // Optional: an NVRTC too old for these kernels must not take the main path down.
+            if let Ok(ptx) = compile_ext(&ptx_arch) {
+                let ext = ctx.load_module(ptx)?;
+                for n in crate::cuda_ext::EXT_KERNELS {
+                    funcs.insert(n.to_string(), ext.load_function(n)?);
+                }
+                ext_module = Some(ext);
+            }
+        }
         let attr = |a| ctx.attribute(a).map(|v| v as i64);
         // Opt the fused kernels in to the large dynamic shared-memory carve-out so the single-launch
         // path covers bigger batch * K. Falls back to the 48 KiB default if the driver refuses.
@@ -359,6 +396,7 @@ impl Gpu {
             stream,
             _module: module,
             _tc_module: tc_module,
+            _ext_module: ext_module,
             funcs,
             info,
         })
@@ -724,6 +762,141 @@ impl Gpu {
             block_dim: (32 * l.warps, 1, 1),
             shared_mem_bytes: 0,
         })
+    }
+
+    /// Batch-1 W2A8 GEMV with one of the extra kernels ([`ExtKernel`]), fused activation `act`
+    /// applied before the residual. Bit-identical to [`crate::cuda_ext::reference_gemv`].
+    /// Needs sm_80+. `scratch` (split-K partials) must hold `w.n` i32 when `kind` is `SplitK`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn gemv_ext(
+        &self,
+        kind: ExtKernel,
+        w: &GpuTernary,
+        a: &GpuActs,
+        residual: Option<&CudaSlice<f16>>,
+        out: &mut CudaSlice<f16>,
+        act: crate::mlp::Act,
+        scratch: Option<&mut CudaSlice<i32>>,
+    ) -> Result<()> {
+        use crate::cuda_ext as x;
+        Self::check_common(w, 1, residual, out)?;
+        if a.batch != 1 || a.k != w.k {
+            return shape_err("gemv_ext takes batch-1 activations matching K");
+        }
+        if self._ext_module.is_none() {
+            return Err(Error::Compile("extra GEMV kernels need sm_80+".into()));
+        }
+        let (n, k, act) = (w.n as i32, w.k as i32, act as i32);
+        let null = 0u64;
+        macro_rules! res {
+            ($b:expr) => {
+                match residual {
+                    Some(r) => $b.arg(r),
+                    None => $b.arg(&null),
+                }
+            };
+        }
+        match kind {
+            ExtKernel::CpAsync { rows_per_warp } => {
+                let r = rows_per_warp as usize;
+                if ![1, 2, 4].contains(&r) {
+                    return shape_err("cp.async rows_per_warp must be 1, 2 or 4");
+                }
+                let smem = x::cpasync_smem_bytes(w.k, r);
+                if smem > 48 * 1024 {
+                    return shape_err(format!("K={} needs {smem} B of smem (> 48 KiB)", w.k));
+                }
+                let rows_per_block = x::CP_WARPS * r;
+                let cfg = LaunchConfig {
+                    grid_dim: (w.n.div_ceil(rows_per_block) as u32, 1, 1),
+                    block_dim: ((x::CP_WARPS * 32) as u32, 1, 1),
+                    shared_mem_bytes: smem as u32,
+                };
+                let mut b = self
+                    .stream
+                    .launch_builder(self.func(&format!("tgx_gemv_cpasync_r{r}")));
+                b.arg(&w.permuted)
+                    .arg(&w.row_scale)
+                    .arg(&a.q)
+                    .arg(&a.s)
+                    .arg(&a.sum);
+                res!(b);
+                b.arg(out).arg(&n).arg(&k).arg(&act);
+                // SAFETY: shapes validated above; smem sized by cpasync_smem_bytes.
+                unsafe { b.launch(cfg) }?;
+            }
+            ExtKernel::SplitK { splits } => {
+                let part = scratch.ok_or_else(|| Error::Shape("split-K needs scratch".into()))?;
+                if part.len() < w.n {
+                    return shape_err("split-K scratch must hold n i32");
+                }
+                let splits = if splits == 0 {
+                    x::splitk_factor(self.info.sm_count as usize, w.n, w.k)
+                } else {
+                    splits as usize
+                };
+                self.stream.memset_zeros(part)?;
+                let cfg = LaunchConfig {
+                    grid_dim: (w.n.div_ceil(16) as u32, splits as u32, 1),
+                    block_dim: (256, 1, 1),
+                    shared_mem_bytes: 0,
+                };
+                let mut b = self.stream.launch_builder(self.func("tgx_gemv_splitk_r2"));
+                b.arg(&w.permuted).arg(&a.q).arg(&mut *part).arg(&n).arg(&k);
+                // SAFETY: shapes validated above.
+                unsafe { b.launch(cfg) }?;
+                let cfg = LaunchConfig {
+                    grid_dim: (w.n.div_ceil(256) as u32, 1, 1),
+                    block_dim: (256, 1, 1),
+                    shared_mem_bytes: 0,
+                };
+                let mut b = self.stream.launch_builder(self.func("tgx_splitk_finalize"));
+                b.arg(&*part).arg(&w.row_scale).arg(&a.s).arg(&a.sum);
+                res!(b);
+                b.arg(out).arg(&n).arg(&act);
+                // SAFETY: shapes validated above.
+                unsafe { b.launch(cfg) }?;
+            }
+            ExtKernel::Lut => {
+                let cfg = LaunchConfig {
+                    grid_dim: (w.n.div_ceil(x::LUT_ROWS) as u32, 1, 1),
+                    block_dim: (256, 1, 1),
+                    shared_mem_bytes: 0,
+                };
+                let mut b = self.stream.launch_builder(self.func("tgx_gemv_lut"));
+                b.arg(&w.natural)
+                    .arg(&w.row_scale)
+                    .arg(&a.q)
+                    .arg(&a.s)
+                    .arg(&a.sum);
+                res!(b);
+                b.arg(out).arg(&n).arg(&k).arg(&act);
+                // SAFETY: shapes validated above.
+                unsafe { b.launch(cfg) }?;
+            }
+            ExtKernel::WarpSpecialized => {
+                let smem = x::warpspec_smem_bytes(w.k);
+                if smem > 48 * 1024 {
+                    return shape_err(format!("K={} needs {smem} B of smem (> 48 KiB)", w.k));
+                }
+                let cfg = LaunchConfig {
+                    grid_dim: (w.n.div_ceil(x::WS_ROWS) as u32, 1, 1),
+                    block_dim: (x::WS_THREADS as u32, 1, 1),
+                    shared_mem_bytes: smem as u32,
+                };
+                let mut b = self.stream.launch_builder(self.func("tgx_gemv_warpspec"));
+                b.arg(&w.permuted)
+                    .arg(&w.row_scale)
+                    .arg(&a.q)
+                    .arg(&a.s)
+                    .arg(&a.sum);
+                res!(b);
+                b.arg(out).arg(&n).arg(&k).arg(&act);
+                // SAFETY: shapes validated above; smem sized by warpspec_smem_bytes.
+                unsafe { b.launch(cfg) }?;
+            }
+        }
+        Ok(())
     }
 
     fn launch_tc_i8(
