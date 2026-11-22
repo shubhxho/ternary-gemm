@@ -99,6 +99,24 @@ fn main() {
                         }
                     }
                 }
+                if ternary_gemm::tensor_core::arch_has_mma(arch) {
+                    match ternary_gemm::gpu::compile_ext(arch) {
+                        Ok(x) => {
+                            let xs = x.to_src();
+                            let xp = out_dir.join(format!("ternary_ext_{arch}.ptx"));
+                            std::fs::write(&xp, &xs).unwrap();
+                            println!(
+                                "NVRTC {arch} ext (cp.async/split-K/LUT/warp-spec): OK, {} kernels, PTX -> {}",
+                                xs.matches(".entry").count(),
+                                xp.display()
+                            );
+                        }
+                        Err(e) => {
+                            println!("NVRTC {arch} ext: FAILED\n{e}");
+                            failed = true;
+                        }
+                    }
+                }
                 if have_ptxas {
                     let sm = arch.replace("compute_", "sm_");
                     match ptxas_report(&ptxas, &sm, &path) {
@@ -109,6 +127,18 @@ fn main() {
                             println!("  ptxas {sm}: FAILED\n{log}");
                             failed = true;
                             continue;
+                        }
+                    }
+                    let xp = out_dir.join(format!("ternary_ext_{arch}.ptx"));
+                    if xp.exists() {
+                        match ptxas_report(&ptxas, &sm, &xp) {
+                            Ok(spills) => println!(
+                                "  {sm} ext: ptxas OK, {spills} kernels with register spills"
+                            ),
+                            Err(log) => {
+                                println!("  ptxas {sm} ext: FAILED\n{log}");
+                                failed = true;
+                            }
                         }
                     }
                     let tcp = out_dir.join(format!("tensor_core_{arch}.ptx"));
