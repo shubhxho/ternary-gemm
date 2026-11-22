@@ -5,17 +5,19 @@
 //!
 //! * [`pack`]: absmean weight quantization and the 2-bit packed layouts.
 //! * [`reference`](mod@reference): pure-Rust CPU reference (correctness oracle).
-//! * [`gpu`]: NVRTC-compiled CUDA kernels with a safe launch API, plus a cuBLAS FP16 baseline.
+//! * [`gpu`] (feature `cuda`, default): NVRTC-compiled CUDA kernels with a safe launch API, plus a cuBLAS FP16 baseline.
 //! * [`mlp`]: small ternary MLPs (signal models): CPU reference, allocation-free SIMD CPU engine.
-//! * [`signal`]: latency-first GPU engines for those models (CUDA graph + pinned memory, and an
+//! * [`signal`] (feature `cuda`): latency-first GPU engines for those models (CUDA graph + pinned memory, and an
 //!   experimental persistent kernel), plus a cuBLAS FP16 baseline.
 
 #![allow(clippy::needless_range_loop)]
 
+#[cfg(feature = "cuda")]
 pub mod gpu;
 pub mod mlp;
 pub mod pack;
 pub mod reference;
+#[cfg(feature = "cuda")]
 pub mod signal;
 
 pub use pack::{quantize_absmean, PackedTernary};

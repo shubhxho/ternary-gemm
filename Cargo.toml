@@ -12,9 +12,35 @@ categories = ["science", "hardware-support"]
 
 [dependencies]
 # dynamic-loading: no CUDA toolkit needed at build time; libcuda / libnvrtc / libcublas are dlopen'ed at runtime.
-cudarc = { version = "0.19", default-features = false, features = ["std", "cuda-12080", "dynamic-loading", "driver", "nvrtc", "cublas", "f16"] }
+cudarc = { version = "0.19", optional = true, default-features = false, features = ["std", "cuda-12080", "dynamic-loading", "driver", "nvrtc", "cublas", "f16"] }
 half = "2"
 rand = "0.9"
+
+[features]
+default = ["cuda"]
+# GPU backend: NVRTC-compiled kernels via cudarc (dlopen'ed at runtime, no toolkit needed to build).
+# Without it the crate is CPU-only: packing, reference, signal-model CPU engine.
+cuda = ["dep:cudarc"]
+
+[[bin]]
+name = "bench"
+required-features = ["cuda"]
+
+[[bin]]
+name = "compile_check"
+required-features = ["cuda"]
+
+[[bin]]
+name = "latency"
+required-features = ["cuda"]
+
+[[example]]
+name = "signal_model"
+required-features = ["cuda"]
+
+[[test]]
+name = "gpu"
+required-features = ["cuda"]
 
 [profile.release]
 debug = 1
