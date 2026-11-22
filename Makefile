@@ -2,7 +2,7 @@
 CARGO ?= cargo
 PY ?= python3
 
-.PHONY: all check fmt fmt-check clippy test doc compile-check latency-cpu bench hooks deny msrv fuzz clean
+.PHONY: all check fmt fmt-check clippy test doc compile-check latency-cpu bench hooks deny msrv fuzz latency-json compare results-validate roofline autotune clean
 
 all: check
 
@@ -30,6 +30,29 @@ compile-check:
 # Signal-model latency on the CPU (no GPU needed); writes results/<time>-cpu-latency.*
 latency-cpu:
 	./scripts/latency_cpu.sh
+
+# CPU latency as a schema-validated JSON document (pinned to core $(CORE), default 2).
+CORE ?= 2
+latency-json:
+	mkdir -p results
+	taskset -c $(CORE) $(CARGO) run --release --bin latency -- --cpu-only --energy --json results/latency-$$(date +%Y%m%d-%H%M%S).json
+
+# make compare BASE=results/a.json NEW=results/b.json [THRESHOLD=0.10]
+THRESHOLD ?= 0.10
+compare:
+	$(PY) scripts/compare_results.py compare $(BASE) $(NEW) --threshold $(THRESHOLD)
+
+results-validate:
+	$(PY) scripts/compare_results.py validate results/*.json
+
+# Roofline projections and modelled launch configs (no GPU needed). ARCH=sm_120 by default.
+ARCH ?= sm_120
+roofline:
+	$(CARGO) run --release --bin roofline -- $(ARCH)
+
+# Autotune on the local GPU (fails without one).
+autotune:
+	$(CARGO) run --release --bin autotune -- --out results/$$(date +%Y%m%d-%H%M%S)-autotune --cache results/tune-cache.csv
 
 # Full GPU benchmark (fails without a GPU).
 bench:
