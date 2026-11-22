@@ -9,7 +9,7 @@
 //! Features are SYNTHETIC random vectors and the models are random (untrained): this measures
 //! latency only, nothing about trading performance.
 //!
-//! usage: latency [--iters N] [--warmup N] [--models tiny,small,medium] [--csv FILE] [--cpu-only] [--energy]
+//! usage: latency [--iters N] [--warmup N] [--models tiny,small,medium] [--csv FILE] [--cpu-only] [--energy] [--json FILE]
 //!
 //! `--energy` also measures energy per inference for the CPU paths with RAPL (and NVML with the
 //! `nvml` feature); it prints "unavailable" when the host exposes no counters.
@@ -28,6 +28,7 @@ const MODELS: &[(&str, &[usize])] = &[
 ];
 
 thread_local! { static CSV: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) }; }
+thread_local! { static RECORDS: RefCell<Vec<ternary_gemm::results::LatencyRecord>> = const { RefCell::new(Vec::new()) }; }
 fn csv(l: String) {
     CSV.with(|c| c.borrow_mut().push(l));
 }
@@ -37,6 +38,7 @@ struct Opts {
     warmup: usize,
     models: Vec<String>,
     csv: Option<String>,
+    json: Option<String>,
     cpu_only: bool,
     energy: bool,
 }
@@ -47,6 +49,7 @@ fn parse() -> Opts {
         warmup: 2000,
         models: MODELS.iter().map(|m| m.0.to_string()).collect(),
         csv: None,
+        json: None,
         cpu_only: false,
         energy: false,
     };
@@ -59,6 +62,7 @@ fn parse() -> Opts {
             "--warmup" => o.warmup = v.parse().expect("--warmup N"),
             "--models" => o.models = v.split(',').map(str::to_string).collect(),
             "--csv" => o.csv = Some(v),
+            "--json" => o.json = Some(v),
             "--cpu-only" => {
                 o.cpu_only = true;
                 i += 1;
@@ -148,6 +152,22 @@ fn report(model: &str, path: &str, device: &str, mut us: Vec<f64>) {
         "| {model} | {path} | {:.2} | {:.2} | {:.2} | {:.2} | {:.1} | {:.2} | {:.2} |",
         s.p50, s.p90, s.p99, s.p999, s.max, s.mean, s.std
     );
+    RECORDS.with(|r| {
+        r.borrow_mut().push(ternary_gemm::results::LatencyRecord {
+            model: model.into(),
+            path: path.into(),
+            device: device.into(),
+            iters: n,
+            p50_us: s.p50,
+            p90_us: s.p90,
+            p99_us: s.p99,
+            p999_us: s.p999,
+            max_us: s.max,
+            mean_us: s.mean,
+            std_us: s.std,
+            joules_per_inference: None,
+        })
+    });
     csv(format!(
         "lat,{model},{path},{device},{n},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4}",
         s.p50, s.p90, s.p99, s.p999, s.max, s.mean, s.std
@@ -164,6 +184,15 @@ fn bits(v: &[f32]) -> Vec<u32> {
 }
 
 fn energy_row(model: &str, path: &str, r: &ternary_gemm::energy::EnergyReport) -> String {
+    if let Some(j) = r.joules_per_iter() {
+        RECORDS.with(|recs| {
+            for rec in recs.borrow_mut().iter_mut() {
+                if rec.model == model && rec.path == path {
+                    rec.joules_per_inference = Some(j);
+                }
+            }
+        });
+    }
     match (r.joules_per_iter(), r.iters_per_joule(), r.avg_watts()) {
         (Some(j), Some(ipj), Some(w)) => format!(
             "| {model} | {path} | {:.3e} | {ipj:.0} | {w:.1} | {:.2} |",
@@ -211,6 +240,7 @@ fn main() {
                 warmup: 100,
                 models: vec![],
                 csv: None,
+                json: None,
                 cpu_only: true,
                 energy: false,
             },
@@ -376,6 +406,14 @@ fn main() {
         if meter.describe() == "none" {
             println!("\nNo RAPL / NVML counters are readable on this host (VMs and containers usually hide them; RAPL often needs root). Energy NOT MEASURED.");
         }
+    }
+    if let Some(path) = &o.json {
+        let mut env = ternary_gemm::results::Environment::capture();
+        env.gpu = gpu.as_ref().map(|g| g.info.name.clone());
+        let doc =
+            RECORDS.with(|r| ternary_gemm::results::latency_json("latency", &env, &r.borrow()));
+        std::fs::write(path, doc).expect("write json");
+        println!("JSON -> {path}");
     }
     if let Some(path) = &o.csv {
         let mut s =
