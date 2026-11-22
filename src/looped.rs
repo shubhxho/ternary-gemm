@@ -490,3 +490,116 @@ pub fn causal_attention(
     }
     out
 }
+
+/// GPU backend (feature `cuda`): every projection runs on the W2A8 kernels
+/// ([`crate::gpu::Gpu::quantize`] + [`crate::gpu::Gpu::gemm_i8`]). Weights are uploaded once;
+/// activations move per call, in token chunks of 16 (the kernels' batch tile).
+///
+/// Without RMSNorm the GEMM results are bit-identical to [`CpuBackend`]; the RMSNorm'ed quantizer
+/// uses `rsqrtf` on the device, so Q/K/V and gate/up can differ in the last bit (see the GPU test).
+#[cfg(feature = "cuda")]
+pub struct GpuBackend<'g> {
+    gpu: &'g crate::gpu::Gpu,
+    mats: Vec<Option<crate::gpu::GpuTernary>>,
+    launch: crate::gpu::Launch,
+}
+
+/// Device-resident activations for [`GpuBackend`], one entry per chunk of <= 16 tokens.
+#[cfg(feature = "cuda")]
+pub struct GpuChunks {
+    chunks: Vec<crate::gpu::GpuActs>,
+}
+
+/// Tokens per GPU GEMM launch (the largest batch tile of the kernels).
+#[cfg(feature = "cuda")]
+pub const GPU_TOKEN_CHUNK: usize = 16;
+
+#[cfg(feature = "cuda")]
+impl<'g> GpuBackend<'g> {
+    pub fn new(
+        gpu: &'g crate::gpu::Gpu,
+        block: &TernaryBlock,
+        adapter: Option<&PackedTernary>,
+    ) -> Result<Self, String> {
+        let up = |w: &PackedTernary| gpu.upload_weights(w).map_err(|e| e.to_string());
+        let mut mats = Vec::with_capacity(8);
+        for w in block.weights() {
+            mats.push(Some(up(w)?));
+        }
+        mats.push(adapter.map(up).transpose()?);
+        Ok(Self {
+            gpu,
+            mats,
+            launch: crate::gpu::Launch::default(),
+        })
+    }
+
+    /// Override the kernel launch configuration (e.g. from the autotuner).
+    pub fn with_launch(mut self, launch: crate::gpu::Launch) -> Self {
+        self.launch = launch;
+        self
+    }
+}
+
+#[cfg(feature = "cuda")]
+impl Backend for GpuBackend<'_> {
+    type Acts = GpuChunks;
+    fn quantize(
+        &mut self,
+        x: &[f16],
+        tokens: usize,
+        k: usize,
+        gamma: Option<&[f16]>,
+    ) -> Result<GpuChunks, String> {
+        let e = |e: crate::gpu::Error| e.to_string();
+        if x.len() != tokens * k {
+            return Err("quantize: x must be [tokens][k]".into());
+        }
+        let g = gamma
+            .map(|g| self.gpu.upload_f16(g))
+            .transpose()
+            .map_err(e)?;
+        let mut chunks = Vec::new();
+        for start in (0..tokens).step_by(GPU_TOKEN_CHUNK) {
+            let t = GPU_TOKEN_CHUNK.min(tokens - start);
+            let xd = self
+                .gpu
+                .upload_f16(&x[start * k..(start + t) * k])
+                .map_err(e)?;
+            let mut acts = self.gpu.alloc_acts(t, k).map_err(e)?;
+            self.gpu
+                .quantize(&xd, g.as_ref(), RMS_EPS, &mut acts)
+                .map_err(e)?;
+            chunks.push(acts);
+        }
+        Ok(GpuChunks { chunks })
+    }
+    fn gemm(
+        &mut self,
+        w: WeightId,
+        a: &GpuChunks,
+        residual: Option<&[f16]>,
+    ) -> Result<Vec<f16>, String> {
+        let e = |e: crate::gpu::Error| e.to_string();
+        let m = self.mats[w as usize]
+            .as_ref()
+            .ok_or_else(|| format!("{w:?} weights not loaded"))?;
+        let n = m.n;
+        let mut y = Vec::new();
+        let mut row = 0;
+        for acts in &a.chunks {
+            let t = acts.batch;
+            let res = residual
+                .map(|r| self.gpu.upload_f16(&r[row * n..(row + t) * n]))
+                .transpose()
+                .map_err(e)?;
+            let mut out = self.gpu.alloc_f16(t * n).map_err(e)?;
+            self.gpu
+                .gemm_i8(m, acts, res.as_ref(), &mut out, self.launch)
+                .map_err(e)?;
+            y.extend(self.gpu.download(&out).map_err(e)?);
+            row += t;
+        }
+        Ok(y)
+    }
+}
