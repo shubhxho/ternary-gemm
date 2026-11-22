@@ -98,3 +98,47 @@ impl CpuTernary {
         }
     }
 }
+
+/// Fast activation quantization, bit-identical to [`crate::reference::quantize_acts`].
+///
+/// Converts fp16 -> f32 with the vectorised `half` slice conversion, applies the RMSNorm scale in
+/// the same operation order as the reference (`(x * g) * inv`, with the sum of squares in f64), and
+/// then reuses the SIMD absmax quantizer [`crate::mlp::quantize_into`]. That is exact: the
+/// reference takes `absmax = max|x * g| * inv`, and because rounding is monotone that equals
+/// `max|(x * g) * inv|`, which is what the SIMD quantizer computes.
+pub fn quantize_acts(
+    x: &[f16],
+    batch: usize,
+    k: usize,
+    gamma: Option<&[f16]>,
+    eps: f32,
+) -> QuantizedActs {
+    use half::slice::HalfFloatSliceExt;
+    assert_eq!(x.len(), batch * k, "x must be [batch][k]");
+    if let Some(g) = gamma {
+        assert!(g.len() >= k, "gamma too short");
+    }
+    let mut out = QuantizedActs {
+        batch,
+        k,
+        q: vec![0; batch * k],
+        s: vec![0.0; batch],
+        sum: vec![0; batch],
+    };
+    let mut xf = vec![0f32; k];
+    let gf: Option<Vec<f32>> = gamma.map(|g| g[..k].iter().map(|v| v.to_f32()).collect());
+    for b in 0..batch {
+        x[b * k..(b + 1) * k].convert_to_f32_slice(&mut xf);
+        if let Some(g) = &gf {
+            let ss: f64 = xf.iter().map(|&v| (v as f64) * (v as f64)).sum();
+            let inv = (1.0 / ((ss / k as f64) + eps as f64).sqrt()) as f32;
+            for (v, &gi) in xf.iter_mut().zip(g) {
+                *v = (*v * gi) * inv;
+            }
+        }
+        let (s, sum) = crate::mlp::quantize_into(&xf, &mut out.q[b * k..(b + 1) * k]);
+        out.s[b] = s;
+        out.sum[b] = sum;
+    }
+    out
+}
