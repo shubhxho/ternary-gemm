@@ -19,7 +19,9 @@ Fused **ternary matmul kernels for LLM decode on NVIDIA GPUs**, written in Rust 
 
 | area | what | docs |
 |---|---|---|
-| CPU backend | `cpu::CpuTernary`: bit-exact W2A8 GEMM for any batch, SIMD (AVX2 / AVX-512 VNNI), threaded; fast bit-exact activation quantizer | [ARCHITECTURE](docs/ARCHITECTURE.md) |
+| CPU backend | `cpu::CpuTernary`: bit-exact W2A8 GEMM for any batch, SIMD (AVX2 / AVX-512 VNNI), threaded; fast bit-exact activation quantizer. `Packed2` layout (`vpmultishiftqb` decode + `vpdpbusd`, AVX-512 VBMI) and a spin-wait thread pool: **2–4× lower measured p50** than the previous engine | [ARCHITECTURE](docs/ARCHITECTURE.md), [CPU_PERF](docs/CPU_PERF.md) |
+| Extra CUDA kernels | `cp.async` 4-stage pipeline, split-K, T-MAC-style LUT, warp-specialized producer/consumer, hand-written PTX; all with a fused dequant + ReLU/ReLU² + residual epilogue. **Compile-checked only** (NVRTC 12.8 and nvcc 13.5, sm_80..sm_120, 0 spills) | [CUDA_EXT](docs/CUDA_EXT.md) |
+| Other languages | Bit-exact ports in Zig, Triton, Mojo, Julia, Futhark and Halide, plus hand PTX, checked against Rust-generated vectors with `make langs` | [LANGUAGES](docs/LANGUAGES.md) |
 | Looped transformer | `looped`: one weight-shared ternary block applied N times, input injection (none / add / adapter), adaptive halting, CPU + GPU backends | [LOOPED](docs/LOOPED.md) |
 | Tensor-core path | sm_80+ `mma.sync` backend: unpack 2-bit weights into int8/fp16 fragments (TriRun / BitBLAS style), selectable in the dispatcher and autotuner. 8× vs fp16 at batch 1 is a theoretical ceiling, not a measured GPU number | [TENSOR_CORES](docs/TENSOR_CORES.md), [report](docs/reports/tensor-core-ternary.md) |
 | RTX 5090 / sm_120 | `tuning` (cited arch profiles, occupancy + roofline model), `autotune` (times model-ranked configs on the device), `roofline` / `autotune` binaries, sm_120 NVRTC checks | [RTX5090](docs/RTX5090.md) |
@@ -30,6 +32,22 @@ Fused **ternary matmul kernels for LLM decode on NVIDIA GPUs**, written in Rust 
 | Results | schema-versioned JSON results, `scripts/compare_results.py` regression check | [results-schema.json](docs/results-schema.json) |
 | Quality | proptest, cargo-fuzz targets, criterion benches, CI (fmt, clippy matrix, Linux/macOS tests, MSRV 1.88, rustdoc, NVRTC sm_80..sm_120, cargo-deny, ruff, hardware, Python, package) | [CONTRIBUTING](CONTRIBUTING.md) |
 | Kernel tooling | `third_party/linux` submodule (shallow, not fetched by default) for perf / turbostat / RAPL work | [LINUX](docs/LINUX.md) |
+
+### Languages
+
+| language | port | checked against Rust | GPU |
+|---|---|---|---|
+| Rust | reference, AVX2 / AVX-512 engines | is the reference | CUDA via NVRTC |
+| CUDA C++ | `kernels/ternary.cu`, `tensor_core.cu`, `ternary_ext.cu` | CPU emulations bit-exact; GPU tests need a device | compile-checked sm_80..120 |
+| PTX | `kernels/ternary_gemv.ptx` (hand-written dp4a GEMV) | — | ptxas sm_61..120, 0 spills |
+| Zig | `langs/zig` (`@Vector` SIMD) | bit-exact, 5 cases | — |
+| Triton | `langs/triton` | bit-exact in the interpreter | lowers to PTX for sm_80 / sm_120 |
+| Mojo | `langs/mojo` (`SIMD`, `comptime for`) | bit-exact, 5 cases | — |
+| Julia | `langs/julia` (`@simd`) | bit-exact, 5 cases | — |
+| Futhark | `langs/futhark` (c + multicore backends) | bit-exact, 5 cases each | CUDA host code only |
+| Halide | `langs/halide` (Python front end, `strict_float`) | bit-exact, 6 tests | CUDA object for sm_86 |
+
+`make langs` regenerates the vectors and runs every port whose toolchain is installed (SKIP otherwise). CPU timings per port are in [docs/LANGUAGES.md](docs/LANGUAGES.md).
 
 ### Tensor-core path (sm_80+)
 
@@ -57,6 +75,9 @@ A selectable backend unpacks the 2-bit natural-layout weights into int8 or fp16 
 git clone https://github.com/shubhxho/ternary-gemm && cd ternary-gemm
 ./scripts/bench.sh            # build -> GPU tests -> GEMM benchmarks + signal-model latency -> results/*.{md,csv,png}
 ./scripts/bench.sh --quick    # batches 1 and 16 only
+./scripts/bench.sh --ext      # also verify + time the extra CUDA kernels (cp.async, split-K, LUT, warp-spec, hand PTX)
+./scripts/bench.sh --cpu-threads 4   # add a 4-thread CPU engine row (pinned to 4 cores)
+./scripts/bench.sh --byte-codes      # add the previous byte-code CPU engine for comparison
 ./scripts/latency_cpu.sh      # signal-model latency on the CPU only (no GPU needed)
 cargo run --release --example signal_model   # synthetic market-feature loop
 ```
@@ -144,7 +165,17 @@ Measured on this repo's build machine (**CPU only**: Intel Xeon cloud VM, 8 vCPU
 
 ![CPU latency percentiles, measured](results/20261122-025900-cpu-latency-tail.png)
 
-Re-measured after the AVX2 activation quantizer and the AVX-512 VNNI dot product landed (same VM, `--features avx512`, pinned to core 3, 20,000 requests per path after 2,000 warm-up; **CPU only**). Raw data: [`results/20261122-162423-cpu-latency-avx512.json`](results/20261122-162423-cpu-latency-avx512.json) (schema-validated; compare runs with `scripts/compare_results.py`).
+**Current (Packed2 + vectorized epilogue, Nov 22 2026).** Same VM, `--features avx512`, pinned to core 3, 20,000 requests after 2,000 warm-up, **CPU only**. Before = `d39d557` rebuilt and run in the same session; medians of two interleaved runs. Raw data: [`results/20261122-195100-cpu-latency-avx512-packed2.json`](results/20261122-195100-cpu-latency-avx512-packed2.json); details in [docs/CPU_PERF.md](docs/CPU_PERF.md).
+
+| model (widths) | ternary SIMD before | ternary SIMD after | speedup | after, 4 threads | dense f32 SIMD |
+|---|---|---|---|---|---|
+| tiny 64-256-256-1 | 2.53 | **1.11** | 2.3× | 1.11 (stays single-threaded) | 5.13 |
+| small 256-1024-1024-16 | 20.2 | **9.32** | 2.2× | 6.21 | 159.1 |
+| medium 1024×4 layers → 4 | 87.7 | **22.3** | 3.9× | 11.62 | 450.8 |
+
+Against the previous table below (2.28 / 18.30 / 80.60), that is 2.05× / 1.96× / 3.6×. Dense f32 was not changed (run-to-run 390–470 µs on medium). The default AVX2-only build improved 1.3× on tiny and small and is unchanged on medium. This is not "100×": batch-1 ternary GEMV is bandwidth-bound, and 8× vs fp16 is the theoretical ceiling.
+
+Previous run, after the AVX2 activation quantizer and the AVX-512 VNNI dot product landed (same VM, `--features avx512`, pinned to core 3, 20,000 requests per path after 2,000 warm-up; **CPU only**). Raw data: [`results/20261122-162423-cpu-latency-avx512.json`](results/20261122-162423-cpu-latency-avx512.json) (schema-validated; compare runs with `scripts/compare_results.py`).
 
 | model (widths) | path | p50 | p99 | p99.9 | max |
 |---|---|---|---|---|---|
@@ -306,6 +337,14 @@ src/bin/latency.rs        batch-1 end-to-end latency benchmark (p50..max, histog
 examples/signal_model.rs  synthetic feature-stream inference loop
 src/bin/compile_check.rs  NVRTC + ptxas register/spill report (no GPU needed)
 src/cpu.rs                CPU W2A8 backend (any batch, SIMD, threads) + fast bit-exact quantizer
+src/cpu_packed.rs         Packed2 layout: AVX-512 VBMI/VNNI + AVX2 + scalar GEMV, vectorized epilogue
+src/spin_pool.rs          spin-wait worker pool (epoch handoff) for low-latency parallel GEMV
+kernels/ternary_ext.cu    cp.async / split-K / LUT / warp-specialized GEMV kernels (sm_80+)
+kernels/ternary_gemv.ptx  hand-written PTX dp4a GEMV
+src/cuda_ext.rs           CPU reference + emulations for the extra kernels, launch heuristics
+examples/bench_ext.rs     verify + time the extra kernels on a GPU (feature cuda)
+examples/lang_vectors.rs  test vectors for the language ports
+langs/                    Zig, Triton, Mojo, Julia, Futhark, Halide ports (scripts/langs_check.sh)
 src/looped.rs             looped (weight-shared) ternary transformer, CPU + GPU backends
 src/tuning.rs             arch profiles (RTX 5090 first), occupancy model, roofline projection
 src/autotune.rs           runtime autotuner (feature cuda) + src/bin/autotune.rs
@@ -320,7 +359,7 @@ fuzz/                     cargo-fuzz targets (.tgm parser, pack roundtrip, SIMD 
 hw/                       FPGA skeleton: RTL, HLS C++, testbenches, Makefile
 bindings/python/          pyo3 bindings, PyTorch op stub, pytest
 third_party/linux         kernel submodule (shallow, update = none)
-docs/                     ARCHITECTURE, LOOPED, RTX5090, ENERGY, HARDWARE, LINUX, TENSOR_CORES,
+docs/                     ARCHITECTURE, CPU_PERF, CUDA_EXT, LANGUAGES, LOOPED, RTX5090, ENERGY, HARDWARE, LINUX, TENSOR_CORES,
                           results schema, reports/tensor-core-ternary.{md,html}, media/
 scripts/bench.sh          one-shot build + verify + benchmark + measured charts
                           (`--tensor-cores` also times the mma.sync path)

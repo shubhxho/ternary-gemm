@@ -7,6 +7,19 @@ All notable changes are listed here. The format follows
 ## [Unreleased]
 
 ### Added
+* `cpu_packed::Packed2`: 16-row × 256-K blocked 2-bit layout with an AVX-512 VBMI/VNNI GEMV
+  (`vpmultishiftqb` decode + `vpdpbusd`, 16 accumulators), AVX2 and scalar fallbacks, and a
+  bit-exact vectorized epilogue. Used by `CpuEngine` (AVX-512 only) and `CpuTernary`. Measured p50
+  on the build VM: tiny 2.53 → 1.11 µs, small 20.2 → 9.32 µs, medium 87.7 → 22.3 µs
+  (`docs/CPU_PERF.md`).
+* `spin_pool::SpinPool` and `CpuEngine::with_threads`: medium 11.6 µs at 4 threads (measured).
+* `latency --threads N --byte-codes --skip-reference`; `bench.sh --ext --cpu-threads N --byte-codes`.
+* `kernels/ternary_ext.cu`: cp.async pipeline (r1/r2/r4), split-K, LUT and warp-specialized
+  GEMV kernels with fused act + residual epilogue; `kernels/ternary_gemv.ptx` hand PTX;
+  `Gpu::gemv_ext` / `gemv_hand_ptx`; `cuda_ext` CPU emulations; `examples/bench_ext.rs`.
+  Compile-checked only (NVRTC 12.8, nvcc 13.5, sm_80..sm_120); no GPU numbers (`docs/CUDA_EXT.md`).
+* Language ports with bit-exact tests against Rust vectors: Zig, Triton, Mojo, Julia, Futhark,
+  Halide (`langs/`, `make langs`, `docs/LANGUAGES.md`).
 * Tensor-core path for ternary GEMM/GEMV (sm_80+, including sm_89 and sm_120): unpack 2-bit
   natural-layout weights into int8/fp16 fragments and issue PTX `mma.sync.aligned.m16n8k16`,
   in the style of TriRun / BitBLAS W2A8. Selectable via `Launch::tensor_core` / `Backend::TensorCore`

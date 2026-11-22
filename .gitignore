@@ -11,3 +11,5 @@ results/tune-cache.csv
 /hw/build
 /hw/vectors
 /langs/vectors
+__pycache__/
+*.pyc
