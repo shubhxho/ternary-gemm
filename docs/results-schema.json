@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/shubhxho/ternary-gemm/docs/results-schema.json",
+  "title": "ternary-gemm benchmark results",
+  "description": "Measured results written by `latency --json` (src/results.rs). Every value is a measurement on the machine described in `environment`.",
+  "type": "object",
+  "required": ["schema_version", "kind", "tool", "environment", "results"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": 1 },
+    "kind": { "enum": ["latency"] },
+    "tool": { "type": "string" },
+    "environment": {
+      "type": "object",
+      "required": ["crate_version", "os", "cpu", "logical_cpus", "unix_time"],
+      "additionalProperties": false,
+      "properties": {
+        "crate_version": { "type": "string" },
+        "git_sha": { "type": ["string", "null"] },
+        "rustc": { "type": ["string", "null"] },
+        "os": { "type": "string" },
+        "kernel": { "type": ["string", "null"] },
+        "cpu": { "type": "string" },
+        "logical_cpus": { "type": "integer", "minimum": 0 },
+        "cpu_governor": { "type": ["string", "null"] },
+        "gpu": { "type": ["string", "null"] },
+        "unix_time": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["model", "path", "device", "iters", "p50_us", "p90_us", "p99_us", "p999_us", "max_us", "mean_us", "std_us"],
+        "additionalProperties": false,
+        "properties": {
+          "model": { "type": "string" },
+          "path": { "type": "string" },
+          "device": { "type": "string" },
+          "iters": { "type": "integer", "minimum": 1 },
+          "p50_us": { "type": "number", "minimum": 0 },
+          "p90_us": { "type": "number", "minimum": 0 },
+          "p99_us": { "type": "number", "minimum": 0 },
+          "p999_us": { "type": "number", "minimum": 0 },
+          "max_us": { "type": "number", "minimum": 0 },
+          "mean_us": { "type": "number", "minimum": 0 },
+          "std_us": { "type": "number", "minimum": 0 },
+          "joules_per_inference": { "type": ["number", "null"], "minimum": 0 }
+        }
+      }
+    }
+  }
+}
