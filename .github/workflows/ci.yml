@@ -127,10 +127,10 @@ jobs:
           submodules: false
       - uses: astral-sh/ruff-action@v3
         with:
-          args: check scripts bindings/python
+          args: check scripts bindings/python langs
       - uses: astral-sh/ruff-action@v3
         with:
-          args: format --check scripts bindings/python
+          args: format --check scripts bindings/python langs
 
   fuzz:
     name: fuzz smoke (nightly, 30 s per target)
