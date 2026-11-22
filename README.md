@@ -1,5 +1,7 @@
 # ternary-gemm
 
+[![CI](https://github.com/shubhxho/ternary-gemm/actions/workflows/ci.yml/badge.svg)](https://github.com/shubhxho/ternary-gemm/actions/workflows/ci.yml)
+
 Fused **ternary matmul kernels for LLM decode on NVIDIA GPUs**, written in Rust and CUDA. The weights follow BitNet b1.58: each one is in {-1, 0, +1} and stored in 2 bits.
 
 * **W2A8**: 2-bit weights × int8 activations using BitNet's per-token absmax scheme. It runs as a GEMV for batch 1 and a small-batch GEMM for batch 1–16. Activation quantization and an optional RMSNorm can be **fused into the prologue**, and the scale and residual add are **fused into the epilogue**.
@@ -12,6 +14,33 @@ Fused **ternary matmul kernels for LLM decode on NVIDIA GPUs**, written in Rust 
 > **Status: no GPU numbers have been measured yet.** The kernels compile with NVRTC 12.8, and `ptxas` assembles them for sm_80, sm_86, sm_89, sm_90 and sm_120. The CPU reference and a lane-by-lane emulation of the kernel index math pass on the CPU. The machine this was written on has **no GPU**, so every GPU latency or bandwidth figure below is either **NOT MEASURED** or explicitly a **theoretical estimate**. Run `./scripts/bench.sh` on a real GPU to fill them in.
 
 ![Fused kernel data flow](docs/img/fused_kernel_dataflow.png)
+
+## What else is in the repo
+
+| area | what | docs |
+|---|---|---|
+| CPU backend | `cpu::CpuTernary`: bit-exact W2A8 GEMM for any batch, SIMD (AVX2 / AVX-512 VNNI), threaded; fast bit-exact activation quantizer | [ARCHITECTURE](docs/ARCHITECTURE.md) |
+| Looped transformer | `looped`: one weight-shared ternary block applied N times, input injection (none / add / adapter), adaptive halting, CPU + GPU backends | [LOOPED](docs/LOOPED.md) |
+| RTX 5090 / sm_120 | `tuning` (cited arch profiles, occupancy + roofline model), `autotune` (times model-ranked configs on the device), `roofline` / `autotune` binaries, sm_120 NVRTC checks | [RTX5090](docs/RTX5090.md) |
+| Energy | `energy`: RAPL + NVML counters, J/inference and inferences/J in `latency --energy` | [ENERGY](docs/ENERGY.md) |
+| Model conversion | `convert` feature: safetensors (f32/f16/bf16) -> `.tgm` (checksummed container) | [ARCHITECTURE](docs/ARCHITECTURE.md) |
+| Python | pyo3 bindings + PyTorch custom-op stub in `bindings/python` | [bindings/python](bindings/python/README.md) |
+| FPGA | multiplier-free ternary dot/MAC RTL, HLS C++ kernel, self-checking testbenches (Icarus, Verilator, g++) | [HARDWARE](docs/HARDWARE.md) |
+| Results | schema-versioned JSON results, `scripts/compare_results.py` regression check | [results-schema.json](docs/results-schema.json) |
+| Quality | proptest, cargo-fuzz targets, criterion benches, CI (fmt, clippy matrix, Linux/macOS tests, MSRV 1.88, rustdoc, NVRTC sm_80..sm_120, cargo-deny, ruff, hardware, Python, package) | [CONTRIBUTING](CONTRIBUTING.md) |
+| Kernel tooling | `third_party/linux` submodule (shallow, not fetched by default) for perf / turbostat / RAPL work | [LINUX](docs/LINUX.md) |
+
+### Cargo features
+
+| feature | default | enables |
+|---|---|---|
+| `cuda` | yes | `gpu`, `signal`, `autotune`, GPU binaries (`cudarc`, dynamic loading: no toolkit needed to build) |
+| `avx2` | yes | x86 SSE4.1/AVX2 SIMD paths (runtime-detected) |
+| `avx512` | no | AVX-512 VNNI dot products (implies `avx2`; needs rustc >= 1.89) |
+| `convert` | no | safetensors -> `.tgm` converter (`convert` binary) |
+| `nvml` | no | GPU energy via NVML (dlopen) |
+
+`cargo build --no-default-features` gives a portable, CPU-only build with no CUDA code at all.
 
 ## Quick start (on the GPU machine, e.g. an RTX 5060)
 
@@ -105,6 +134,17 @@ Measured on this repo's build machine (**CPU only**: Intel Xeon cloud VM, 8 vCPU
 | medium 1024×4 layers → 4 | dense f32 AVX2 | 365.91 | 436.94 | 607.71 | 89419.3 |
 
 ![CPU latency percentiles, measured](results/20261122-025900-cpu-latency-tail.png)
+
+Re-measured after the AVX2 activation quantizer and the AVX-512 VNNI dot product landed (same VM, `--features avx512`, pinned to core 3, 20,000 requests per path after 2,000 warm-up; **CPU only**). Raw data: [`results/20261122-162423-cpu-latency-avx512.json`](results/20261122-162423-cpu-latency-avx512.json) (schema-validated; compare runs with `scripts/compare_results.py`).
+
+| model (widths) | path | p50 | p99 | p99.9 | max |
+|---|---|---|---|---|---|
+| tiny 64-256-256-1 | ternary SIMD (`CpuEngine`, AVX-512 VNNI) | 2.28 | 3.03 | 4.10 | 11.7 |
+| tiny 64-256-256-1 | dense f32 AVX2 | 4.79 | 6.24 | 9.97 | 23.0 |
+| small 256-1024-1024-16 | ternary SIMD (`CpuEngine`, AVX-512 VNNI) | 18.30 | 22.57 | 31.66 | 41.0 |
+| small 256-1024-1024-16 | dense f32 AVX2 | 147.78 | 177.21 | 218.49 | 565.2 |
+| medium 1024×4 layers → 4 | ternary SIMD (`CpuEngine`, AVX-512 VNNI) | 80.60 | 104.60 | 121.20 | 171.2 |
+| medium 1024×4 layers → 4 | dense f32 AVX2 | 471.50 | 517.37 | 615.66 | 16991.4 |
 
 Max values on a shared VM include scheduler and hypervisor noise. On a tuned box (isolated cores, no frequency scaling) the tail should be tighter, but that has not been measured here. **GPU latency is NOT MEASURED**: the build machine has no GPU. `./scripts/bench.sh` on a GPU machine adds the GPU rows (graph + spin, direct, blocking sync, persistent, cuBLAS FP16) to the same tables and charts.
 
@@ -232,7 +272,7 @@ What is narrower or different here:
 * **Signal-model path:** widths are at most 4096 and K must be a multiple of 16 (zero-pad features). One block per sample means a single SM does all the work, which is right for latency on small models but caps large layers at one SM's bandwidth. The persistent engine is batch 1 only, experimental and untested on hardware. Its host↔device ordering relies on x86 TSO plus `__threadfence_system`. `CpuEngine` stores one byte per weight, so models over the L2 size become memory-bound; a 2-bit in-register decode for the CPU is not implemented. The dense f32 baseline is a straightforward AVX2+FMA matvec, not MKL or oneDNN.
 
 * **No GPU measurements yet**, as described above.
-* `K` must be a multiple of 64. Batch is limited to 1–16, which is decode-oriented; there is no tensor-core path for prefill.
+* GPU kernels need `K` to be a multiple of 64 (zero-pad with `pack::pad_k` / `pad_k_acts`, which is exact) and batch 1–16 per launch (chunk larger batches, or use `cpu::CpuTernary`, which takes any batch). This is decode-oriented; there is no tensor-core path for prefill.
 * Scales are per row (or per tensor), with no per-group scales.
 * The fused kernel needs `batch·K` bytes of shared memory, up to the opt-in limit (≈ 99 KiB on consumer GPUs, so batch ≤ 9 at K = 11008). Above that, use `quantize` plus `gemm_i8`. A large carve-out lowers occupancy; whether fused still wins at big batch·K is unmeasured.
 * There is no split-K, so very small `N` with very large `K` underfills the GPU.
@@ -253,12 +293,29 @@ src/signal.rs             GPU latency engines: SignalEngine (graph + pinned), Pe
 src/bin/latency.rs        batch-1 end-to-end latency benchmark (p50..max, histograms, CSV)
 examples/signal_model.rs  synthetic feature-stream inference loop
 src/bin/compile_check.rs  NVRTC + ptxas register/spill report (no GPU needed)
-tests/                    cpu_reference, kernel_emulation, mlp (CPU), gpu (needs GPU)
+src/cpu.rs                CPU W2A8 backend (any batch, SIMD, threads) + fast bit-exact quantizer
+src/looped.rs             looped (weight-shared) ternary transformer, CPU + GPU backends
+src/tuning.rs             arch profiles (RTX 5090 first), occupancy model, roofline projection
+src/autotune.rs           runtime autotuner (feature cuda) + src/bin/autotune.rs
+src/bin/roofline.rs       projected bounds + modelled configs for any profile (no GPU)
+src/energy.rs             RAPL / NVML energy counters
+src/results.rs            environment capture + JSON results writer
+src/format.rs, convert.rs .tgm container, safetensors converter (+ src/bin/convert.rs)
+tests/                    CPU reference, kernel emulation, MLP, CPU backend, properties, looped,
+                          format, convert, energy (CPU); gpu, looped_gpu (GPU); nvrtc_sm120 (NVRTC)
+benches/cpu.rs            criterion benchmarks (quantize, signal models, packing, looped)
+fuzz/                     cargo-fuzz targets (.tgm parser, pack roundtrip, SIMD quantize)
+hw/                       FPGA skeleton: RTL, HLS C++, testbenches, Makefile
+bindings/python/          pyo3 bindings, PyTorch op stub, pytest
+third_party/linux         kernel submodule (shallow, update = none)
+docs/                     ARCHITECTURE, LOOPED, RTX5090, ENERGY, HARDWARE, LINUX, results schema
 scripts/bench.sh          one-shot build + verify + benchmark + measured charts
 scripts/latency_cpu.sh    CPU-only latency run (no GPU needed) + charts
 scripts/plot_latency.py   latency CSV -> tail-percentile and histogram charts
 scripts/plot_results.py   bench CSV -> results/*.png ("Measured on <GPU>")
 scripts/make_doc_charts.py  docs/img/*.png (theoretical charts + data-flow diagram)
+scripts/compare_results.py  validate results JSON against the schema, regression compare
+scripts/linux_tools.sh    fetch the kernel submodule, build perf + turbostat
 ```
 
 License: MIT.
