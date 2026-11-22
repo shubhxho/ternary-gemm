@@ -249,6 +249,33 @@ impl PackedTernary {
     }
 }
 
+/// Zero-pad a row-major `[n][k]` ternary matrix to the next multiple of [`K_ALIGN`] columns.
+///
+/// Lifts the `K % 64 == 0` packing requirement: pad the weights with this and the activations with
+/// [`pad_k_acts`]. Zero weights and zero activations leave every dot product, the absmax
+/// quantization scale and `sum(q)` unchanged, so results are identical to the unpadded math.
+/// Returns the padded matrix and the padded `K`.
+pub fn pad_k(w: &[i8], n: usize, k: usize) -> (Vec<i8>, usize) {
+    assert_eq!(w.len(), n * k, "w must be [n][k]");
+    let kp = k.next_multiple_of(K_ALIGN).max(K_ALIGN);
+    let mut out = vec![0i8; n * kp];
+    for r in 0..n {
+        out[r * kp..r * kp + k].copy_from_slice(&w[r * k..(r + 1) * k]);
+    }
+    (out, kp)
+}
+
+/// Zero-pad `[batch][k]` activations to `[batch][kp]` (see [`pad_k`]).
+pub fn pad_k_acts<T: Copy + Default>(x: &[T], batch: usize, k: usize, kp: usize) -> Vec<T> {
+    assert_eq!(x.len(), batch * k, "x must be [batch][k]");
+    assert!(kp >= k);
+    let mut out = vec![T::default(); batch * kp];
+    for b in 0..batch {
+        out[b * kp..b * kp + k].copy_from_slice(&x[b * k..(b + 1) * k]);
+    }
+    out
+}
+
 /// BitNet b1.58 "absmean" weight quantization of an f32 `[n][k]` matrix.
 ///
 /// `per_row = false` reproduces BitNet (one scale for the whole tensor); `true` uses a scale per
