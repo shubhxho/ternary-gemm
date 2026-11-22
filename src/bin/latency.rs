@@ -288,6 +288,14 @@ fn main() {
                     e.run(Submit::Graph, Wait::Spin).unwrap();
                     assert_eq!(bits(r), bits(e.output()), "SignalEngine mismatch");
                 }
+                if o.energy {
+                    // GPU path energy: CPU package (host spin-waits) + GPU board, both measured.
+                    let r = meter.measure(o.iters as u64, || {
+                        e.input_mut().copy_from_slice(&pool[0]);
+                        e.run(Submit::Graph, Wait::Spin).unwrap();
+                    });
+                    energy_rows.push(energy_row(&label, "GPU ternary graph + spin", &r));
+                }
                 if let Some(err) = &e.graph_error {
                     println!(
                         "| {label} | GPU ternary graph | n/a (capture failed: {err}) | | | | | | |"
