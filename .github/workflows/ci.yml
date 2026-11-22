@@ -92,3 +92,14 @@ jobs:
           echo "LD_LIBRARY_PATH=$NV/cuda_nvrtc/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
           echo "PTXAS=$NV/cuda_nvcc/bin/ptxas" >> "$GITHUB_ENV"
       - run: cargo run --release --bin compile_check
+
+  deny:
+    name: cargo-deny (advisories, licenses, bans, sources)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
