@@ -152,7 +152,8 @@ fn engine_reports_simd_path() {
             "portable",
             "avx2",
             "avx512-vnni",
-            "avx512-vnni-vbmi packed2"
+            "avx512-vnni-vbmi packed2",
+            "avx2 packed2"
         ]
         .contains(&s),
         "{s}"
