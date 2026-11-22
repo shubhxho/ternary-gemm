@@ -6,6 +6,7 @@
 //! * [`pack`]: absmean weight quantization and the 2-bit packed layouts.
 //! * [`reference`](mod@reference): pure-Rust CPU reference (correctness oracle).
 //! * [`gpu`] (feature `cuda`, default): NVRTC-compiled CUDA kernels with a safe launch API, plus a cuBLAS FP16 baseline.
+//! * [`convert`] (feature `convert`): safetensors -> `.tgm` (absmean ternarization).
 //! * [`cpu`]: CPU W2A8 GEMM backend (no-GPU fallback, any batch, threaded), bit-exact.
 //! * [`format`]: the `.tgm` container for converted ternary models.
 //! * [`mlp`]: small ternary MLPs (signal models): CPU reference, allocation-free SIMD CPU engine.
@@ -14,6 +15,8 @@
 
 #![allow(clippy::needless_range_loop)]
 
+#[cfg(feature = "convert")]
+pub mod convert;
 pub mod cpu;
 pub mod format;
 #[cfg(feature = "cuda")]

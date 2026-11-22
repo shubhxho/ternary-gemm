@@ -14,6 +14,7 @@ categories = ["science", "hardware-support"]
 # dynamic-loading: no CUDA toolkit needed at build time; libcuda / libnvrtc / libcublas are dlopen'ed at runtime.
 cudarc = { version = "0.19", optional = true, default-features = false, features = ["std", "cuda-12080", "dynamic-loading", "driver", "nvrtc", "cublas", "f16"] }
 half = "2"
+safetensors = { version = "0.6", optional = true }
 rand = "0.9"
 
 [dev-dependencies]
@@ -35,6 +36,8 @@ avx2 = []
 # AVX-512 VNNI (vpdpbusd) path for CpuEngine, runtime-detected. Needs rustc >= 1.89 (stable
 # AVX-512 intrinsics), so it is opt-in above the 1.88 MSRV.
 avx512 = ["avx2"]
+# safetensors -> .tgm converter (src/convert.rs, `convert` binary).
+convert = ["dep:safetensors"]
 
 [[bin]]
 name = "bench"
@@ -43,6 +46,10 @@ required-features = ["cuda"]
 [[bin]]
 name = "compile_check"
 required-features = ["cuda"]
+
+[[bin]]
+name = "convert"
+required-features = ["convert"]
 
 [[bin]]
 name = "latency"
@@ -55,6 +62,10 @@ required-features = ["cuda"]
 [[test]]
 name = "gpu"
 required-features = ["cuda"]
+
+[[test]]
+name = "convert"
+required-features = ["convert"]
 
 [profile.release]
 debug = 1
