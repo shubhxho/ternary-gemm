@@ -39,7 +39,7 @@ rand = "0.9"
 
 [dev-dependencies]
 proptest = "1"
-criterion = { version = "0.7", default-features = false, features = ["cargo_bench_support"] }
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 
 [[bench]]
 name = "cpu"
