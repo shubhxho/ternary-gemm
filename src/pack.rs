@@ -46,6 +46,8 @@ impl std::fmt::Display for PackError {
 impl std::error::Error for PackError {}
 
 /// A ternary weight matrix `[n][k]` with one f32 scale per output row.
+///
+/// Equality compares shape, scales and weights (the permuted layout is derived from them).
 #[derive(Debug, Clone)]
 pub struct PackedTernary {
     pub n: usize,
@@ -90,6 +92,12 @@ fn pack_word_natural(codes: &[u8]) -> u32 {
     w
 }
 
+impl PartialEq for PackedTernary {
+    fn eq(&self, o: &Self) -> bool {
+        self.n == o.n && self.k == o.k && self.natural == o.natural && self.row_scale == o.row_scale
+    }
+}
+
 impl PackedTernary {
     /// Pack a row-major `[n][k]` matrix of `{-1,0,1}` with per-row scales.
     pub fn from_ternary(
@@ -132,6 +140,56 @@ impl PackedTernary {
                 }
                 permuted[row * kw + permuted_word_index(kb, kw)] = pack_word_permuted(&codes);
                 natural[row * kw + kb] = pack_word_natural(&codes);
+            }
+        }
+        Ok(Self {
+            n,
+            k,
+            permuted,
+            natural,
+            row_scale,
+        })
+    }
+
+    /// Rebuild from the natural layout (`k / 16` words per row), validating every code and
+    /// regenerating the permuted layout. Used by the `.tgm` loader.
+    pub fn from_natural(
+        natural: Vec<u32>,
+        n: usize,
+        k: usize,
+        row_scale: Vec<f32>,
+    ) -> Result<Self, PackError> {
+        if !k.is_multiple_of(K_ALIGN) || k == 0 {
+            return Err(PackError::KNotAligned(k));
+        }
+        let kw = k / 16;
+        if natural.len() != n * kw {
+            return Err(PackError::BadLength {
+                expected: n * k,
+                got: natural.len() * 16,
+            });
+        }
+        if row_scale.len() != n {
+            return Err(PackError::BadScales {
+                expected: n,
+                got: row_scale.len(),
+            });
+        }
+        let mut permuted = vec![0u32; n * kw];
+        for row in 0..n {
+            for kb in 0..kw {
+                let word = natural[row * kw + kb];
+                let mut codes = [0u8; 16];
+                for (t, c) in codes.iter_mut().enumerate() {
+                    *c = ((word >> (2 * t)) & 3) as u8;
+                    if *c == 3 {
+                        return Err(PackError::NotTernary {
+                            index: row * k + kb * 16 + t,
+                            value: 2,
+                        });
+                    }
+                }
+                permuted[row * kw + permuted_word_index(kb, kw)] = pack_word_permuted(&codes);
             }
         }
         Ok(Self {
