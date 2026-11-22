@@ -508,10 +508,10 @@ impl CpuEngine {
     }
 }
 
-/// Same architecture with dense f32 weights (the dequantized ternary weights), plain CPU baseline.
 /// One dense layer: (n, k, weights `[n][k]`, bias, activation).
 type DenseLayer = (usize, usize, Vec<f32>, Vec<f32>, Act);
 
+/// Same architecture with dense f32 weights (the dequantized ternary weights), plain CPU baseline.
 pub struct DenseF32Mlp {
     layers: Vec<DenseLayer>,
     bufs: [Vec<f32>; 2],
