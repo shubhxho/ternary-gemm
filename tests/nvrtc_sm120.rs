@@ -192,3 +192,30 @@ fn ext_kernels_compile_for_sm80_through_sm120() {
         std::fs::remove_dir_all(dir).ok();
     }
 }
+
+/// The hand-written PTX kernel assembles with ptxas for sm_61 .. sm_120 without spills.
+#[test]
+fn hand_written_ptx_assembles() {
+    let Ok(ptxas) = std::env::var("PTXAS") else {
+        eprintln!("SKIPPED (set PTXAS to assemble kernels/ternary_gemv.ptx)");
+        return;
+    };
+    let dir = std::env::temp_dir().join(format!("tgemm-hand-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let p = dir.join("hand.ptx");
+    std::fs::write(&p, ternary_gemm::cuda_ext::HAND_PTX).unwrap();
+    for sm in [
+        "sm_61", "sm_75", "sm_80", "sm_86", "sm_89", "sm_90", "sm_120",
+    ] {
+        let o = Command::new(&ptxas)
+            .args(["-v", "-O3", &format!("--gpu-name={sm}"), "-o"])
+            .arg(dir.join(format!("hand_{sm}.cubin")))
+            .arg(&p)
+            .output()
+            .expect("run ptxas");
+        let log = String::from_utf8_lossy(&o.stderr);
+        assert!(o.status.success(), "{sm}: {log}");
+        assert!(log.contains("0 bytes spill stores"), "{sm}: {log}");
+    }
+    std::fs::remove_dir_all(dir).ok();
+}

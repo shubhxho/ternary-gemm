@@ -85,3 +85,31 @@ fn ext_kernels_bit_exact_vs_reference() {
         }
     }
 }
+
+#[test]
+fn hand_written_ptx_bit_exact_vs_reference() {
+    let Some(g) = gpu() else { return };
+    let mut rng = StdRng::seed_from_u64(78);
+    for &(n, k) in &[(1usize, 64usize), (37, 2112), (2560, 2560), (4096, 11008)] {
+        let w: Vec<i8> = (0..n * k).map(|_| rng.random_range(-1i8..=1)).collect();
+        let sc: Vec<f32> = (0..n).map(|_| rng.random_range(0.01f32..0.1)).collect();
+        let p = PackedTernary::from_ternary(&w, n, k, sc).unwrap();
+        let x: Vec<f16> = (0..k)
+            .map(|_| f16::from_f32(rng.random_range(-2.0..2.0)))
+            .collect();
+        let a = quantize_acts(&x, 1, k, None, 1e-5);
+        let gw = g.upload_weights(&p).unwrap();
+        let mut ga = g.alloc_acts(1, k).unwrap();
+        g.quantize(&g.upload_f16(&x).unwrap(), None, 1e-5, &mut ga)
+            .unwrap();
+        let mut out = g.alloc_f16(n).unwrap();
+        g.gemv_hand_ptx(&gw, &ga, &mut out).unwrap();
+        let got: Vec<f16> = g.download(&out).unwrap();
+        let want = reference_gemv(&p, &a, None, Act::Identity);
+        assert_eq!(
+            want.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+            got.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+            "hand PTX {n}x{k}"
+        );
+    }
+}

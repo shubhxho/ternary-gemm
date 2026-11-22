@@ -231,6 +231,7 @@ pub struct Gpu {
     _module: Arc<CudaModule>,
     _tc_module: Option<Arc<CudaModule>>,
     _ext_module: Option<Arc<CudaModule>>,
+    _ptx_module: Option<Arc<CudaModule>>,
     funcs: HashMap<String, CudaFunction>,
     pub info: DeviceInfo,
 }
@@ -355,6 +356,15 @@ impl Gpu {
                 ext_module = Some(ext);
             }
         }
+        // The hand-written PTX kernel (sm_61+, which every device that got this far satisfies).
+        let ptx_module = ctx
+            .load_module(Ptx::from_src(crate::cuda_ext::HAND_PTX))
+            .ok()
+            .and_then(|m| {
+                let f = m.load_function(crate::cuda_ext::HAND_PTX_KERNEL).ok()?;
+                funcs.insert(crate::cuda_ext::HAND_PTX_KERNEL.to_string(), f);
+                Some(m)
+            });
         let attr = |a| ctx.attribute(a).map(|v| v as i64);
         // Opt the fused kernels in to the large dynamic shared-memory carve-out so the single-launch
         // path covers bigger batch * K. Falls back to the 48 KiB default if the driver refuses.
@@ -397,6 +407,7 @@ impl Gpu {
             _module: module,
             _tc_module: tc_module,
             _ext_module: ext_module,
+            _ptx_module: ptx_module,
             funcs,
             info,
         })
@@ -896,6 +907,45 @@ impl Gpu {
                 unsafe { b.launch(cfg) }?;
             }
         }
+        Ok(())
+    }
+
+    /// Batch-1 W2A8 GEMV with the hand-written PTX kernel (`kernels/ternary_gemv.ptx`), 4 rows
+    /// per 128-thread block. Bit-identical to [`crate::reference::gemm_i8`] (no residual).
+    pub fn gemv_hand_ptx(
+        &self,
+        w: &GpuTernary,
+        a: &GpuActs,
+        out: &mut CudaSlice<f16>,
+    ) -> Result<()> {
+        Self::check_common(w, 1, None, out)?;
+        if a.batch != 1 || a.k != w.k {
+            return shape_err("gemv_hand_ptx takes batch-1 activations matching K");
+        }
+        if self._ptx_module.is_none() {
+            return Err(Error::Compile(
+                "hand-written PTX module failed to load".into(),
+            ));
+        }
+        let cfg = LaunchConfig {
+            grid_dim: (w.n.div_ceil(4) as u32, 1, 1),
+            block_dim: (128, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let (n, k) = (w.n as u32, w.k as u32);
+        let mut b = self
+            .stream
+            .launch_builder(self.func(crate::cuda_ext::HAND_PTX_KERNEL));
+        b.arg(&w.permuted)
+            .arg(&w.row_scale)
+            .arg(&a.q)
+            .arg(&a.s)
+            .arg(&a.sum)
+            .arg(out)
+            .arg(&n)
+            .arg(&k);
+        // SAFETY: shapes validated above; the kernel's parameter list matches.
+        unsafe { b.launch(cfg) }?;
         Ok(())
     }
 

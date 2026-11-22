@@ -16,6 +16,13 @@ use half::f16;
 /// The CUDA source of the extra kernels.
 pub const EXT_SOURCE: &str = include_str!("../kernels/ternary_ext.cu");
 
+/// The hand-written PTX GEMV ([`kernels/ternary_gemv.ptx`](../../kernels/ternary_gemv.ptx)):
+/// batch-1, permuted layout, one warp per row, identity epilogue. Entry point
+/// [`HAND_PTX_KERNEL`]; assembles for sm_61+.
+pub const HAND_PTX: &str = include_str!("../kernels/ternary_gemv.ptx");
+/// Entry point of [`HAND_PTX`].
+pub const HAND_PTX_KERNEL: &str = "ternary_gemv_ptx";
+
 /// Every `extern "C"` entry point in [`EXT_SOURCE`].
 pub const EXT_KERNELS: &[&str] = &[
     "tgx_gemv_cpasync_r1",
