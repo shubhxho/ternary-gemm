@@ -147,3 +147,14 @@ jobs:
           for t in tgm_parse pack_roundtrip quantize_simd; do
             cargo fuzz run "$t" -- -max_total_time=30
           done
+
+  hardware:
+    name: FPGA skeleton (Icarus, Verilator, HLS C++ testbench)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install simulators
+        run: sudo apt-get update && sudo apt-get install -y iverilog verilator
+      - run: make -C hw all
