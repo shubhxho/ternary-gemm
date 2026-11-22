@@ -18,12 +18,18 @@ pub struct CpuTernary {
     row_scale: Vec<f32>,
     avx2: bool,
     threads: usize,
+    /// 2-bit packed copy for the in-register-decode kernel ([`crate::cpu_packed`]) when the CPU
+    /// has AVX-512 VNNI + VBMI; used for single-threaded calls.
+    packed: Option<crate::cpu_packed::Packed2>,
 }
 
 impl CpuTernary {
     /// Decode packed weights for CPU execution (single-threaded; see [`Self::with_threads`]).
     pub fn new(w: &PackedTernary) -> Self {
-        let codes = w.unpack().into_iter().map(|v| (v + 1) as u8).collect();
+        let vals = w.unpack();
+        let packed = crate::cpu_packed::available()
+            .then(|| crate::cpu_packed::Packed2::from_ternary(&vals, w.n, w.k));
+        let codes = vals.into_iter().map(|v| (v + 1) as u8).collect();
         #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
         let avx2 = std::is_x86_feature_detected!("avx2");
         #[cfg(not(all(target_arch = "x86_64", feature = "avx2")))]
@@ -35,7 +41,14 @@ impl CpuTernary {
             row_scale: w.row_scale.clone(),
             avx2,
             threads: 1,
+            packed,
         }
+    }
+
+    /// Drop the packed copy and always use the byte-code kernels (for A/B benchmarks).
+    pub fn without_packed(mut self) -> Self {
+        self.packed = None;
+        self
     }
 
     /// Split output rows across `threads` scoped threads (1 = no threading). Results are identical
@@ -60,6 +73,25 @@ impl CpuTernary {
             assert_eq!(r.len(), a.batch * self.n, "residual must be [batch][n]");
         }
         let (n, k, batch) = (self.n, self.k, a.batch);
+        if let (Some(p), 1) = (&self.packed, self.threads) {
+            // Per token: in-register 2-bit decode + VNNI, then the same scalar epilogue.
+            let mut q = vec![0i8; p.q_len()];
+            let mut acc = vec![0i32; p.n_padded()];
+            for b in 0..batch {
+                q[..k].copy_from_slice(&a.q[b * k..(b + 1) * k]);
+                crate::cpu_packed::gemv(p, &q, &mut acc);
+                for r in 0..n {
+                    let mut t = (acc[r] - a.sum[b]) as f32;
+                    t /= a.s[b];
+                    t *= self.row_scale[r];
+                    if let Some(res) = residual {
+                        t += res[b * n + r].to_f32();
+                    }
+                    y[b * n + r] = f16::from_f32(t);
+                }
+            }
+            return;
+        }
         // Row-major [n][batch] scratch so each thread owns a contiguous block of rows.
         let mut yt = vec![f16::ZERO; n * batch];
         let epilogue = |r: usize, b: usize, acc: i32| {

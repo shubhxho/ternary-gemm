@@ -38,6 +38,11 @@ fn cpu_gemm_bit_exact_any_batch_and_threads() {
                         .with_threads(threads)
                         .gemm_i8(&a, residual);
                     assert_eq!(bits(&want), bits(&got), "{n}x{k} b{batch} t{threads}");
+                    let got = CpuTernary::new(&p)
+                        .without_packed()
+                        .with_threads(threads)
+                        .gemm_i8(&a, residual);
+                    assert_eq!(bits(&want), bits(&got), "bytes {n}x{k} b{batch} t{threads}");
                 }
             }
         }
