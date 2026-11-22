@@ -568,6 +568,13 @@ pub struct CpuEngine {
     avx2: bool,
     #[cfg_attr(not(all(target_arch = "x86_64", feature = "avx512")), allow(dead_code))]
     vnni: bool,
+    /// 2-bit packed weights decoded in registers ([`crate::cpu_packed`]), when the CPU has
+    /// AVX-512 VNNI + VBMI; `None` falls back to the byte-code paths.
+    packed: Option<Vec<crate::cpu_packed::Packed2>>,
+    /// Row sums scratch for the packed path (`n` padded to 16).
+    acc: Vec<i32>,
+    /// Optional spinning worker pool for the packed path ([`Self::with_threads`]).
+    pool: Option<crate::spin_pool::SpinPool>,
 }
 
 impl CpuEngine {
@@ -587,20 +594,80 @@ impl CpuEngine {
             .iter()
             .map(|l| l.w.iter().map(|&v| (v + 1) as u8).collect())
             .collect();
+        let packed = crate::cpu_packed::available().then(|| {
+            model
+                .layers
+                .iter()
+                .map(|l| crate::cpu_packed::Packed2::from_ternary(&l.w, l.n, l.k))
+                .collect::<Vec<_>>()
+        });
+        let qlen = d.div_ceil(64) * 64;
+        let acc_len = d.div_ceil(crate::cpu_packed::ROWS) * crate::cpu_packed::ROWS;
         Ok(Self {
             model: model.clone(),
             codes,
             bufs: [vec![0.0; d], vec![0.0; d]],
-            q: vec![0; d],
+            q: vec![0; qlen],
             avx2,
             vnni,
+            packed,
+            acc: vec![0; acc_len],
+            pool: None,
         })
+    }
+
+    /// Split each layer's rows across `threads` threads (caller included) using a spinning
+    /// [`SpinPool`](crate::spin_pool::SpinPool). Only the packed AVX-512 path is threaded; results
+    /// are identical for any thread count. Idle workers spin, so dedicate cores to this.
+    pub fn with_threads(mut self, threads: usize) -> Self {
+        self.pool = (threads > 1).then(|| crate::spin_pool::SpinPool::new(threads));
+        self
+    }
+
+    /// Force the byte-code SIMD path even when the packed AVX-512 path is available (used to
+    /// benchmark one against the other; results are identical).
+    pub fn without_packed(mut self) -> Self {
+        self.packed = None;
+        self
+    }
+
+    fn forward_packed(&mut self, x: &[f32], out: &mut [f32]) {
+        let packed = self.packed.as_ref().expect("packed path");
+        let [b0, b1] = &mut self.bufs;
+        let (mut cur, mut nxt) = (b0, b1);
+        cur[..x.len()].copy_from_slice(x);
+        let nl = self.model.layers.len();
+        for (li, l) in self.model.layers.iter().enumerate() {
+            let p = &packed[li];
+            let (s, sum_q) = quantize_into(&cur[..l.k], &mut self.q[..l.k]);
+            let (q, acc) = (&self.q[..p.q_len()], &mut self.acc[..p.n_padded()]);
+            match &self.pool {
+                // Small layers finish faster than a fork-join round trip; measured on an 8-vCPU
+                // Xeon VM, the break-even is a few hundred thousand weights.
+                Some(pool)
+                    if l.n * l.k >= crate::cpu_packed::PAR_MIN_WEIGHTS && pool.threads() > 1 =>
+                {
+                    crate::cpu_packed::gemv_parallel(p, q, acc, pool)
+                }
+                _ => crate::cpu_packed::gemv(p, q, acc),
+            }
+            let dst: &mut [f32] = if li + 1 == nl {
+                &mut *out
+            } else {
+                &mut nxt[..l.n]
+            };
+            crate::cpu_packed::epilogue(&self.acc, sum_q, s, &l.scale, &l.bias, l.act, dst);
+            std::mem::swap(&mut cur, &mut nxt);
+        }
     }
 
     /// `x: [in_dim]` -> `out: [out_dim]`. No heap allocation.
     pub fn forward_into(&mut self, x: &[f32], out: &mut [f32]) {
         assert_eq!(x.len(), self.model.in_dim());
         assert_eq!(out.len(), self.model.out_dim());
+        if self.packed.is_some() {
+            return self.forward_packed(x, out);
+        }
         let [b0, b1] = &mut self.bufs;
         let (mut cur, mut nxt) = (b0, b1);
         cur[..x.len()].copy_from_slice(x);
@@ -616,6 +683,8 @@ impl CpuEngine {
                 &mut nxt[..l.n]
             };
             let row = |r: usize| &codes[r * l.k..(r + 1) * l.k];
+            // Integer row sums first, then one vectorized epilogue pass over the layer.
+            let acc = &mut self.acc[..l.n];
             #[allow(unused_mut)] // only advanced by the SIMD 4-row paths
             let mut r0 = 0;
             #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
@@ -625,10 +694,7 @@ impl CpuEngine {
                     let a = unsafe {
                         dot_codes4_vnni([row(r0), row(r0 + 1), row(r0 + 2), row(r0 + 3)], q)
                     };
-                    for j in 0..4 {
-                        let r = r0 + j;
-                        dst[r] = act(((a[j] - sum_q) as f32 / s) * l.scale[r] + l.bias[r], l.act);
-                    }
+                    acc[r0..r0 + 4].copy_from_slice(&a);
                     r0 += 4;
                 }
             }
@@ -639,17 +705,14 @@ impl CpuEngine {
                     let a = unsafe {
                         dot_codes4_avx2([row(r0), row(r0 + 1), row(r0 + 2), row(r0 + 3)], q)
                     };
-                    for j in 0..4 {
-                        let r = r0 + j;
-                        dst[r] = act(((a[j] - sum_q) as f32 / s) * l.scale[r] + l.bias[r], l.act);
-                    }
+                    acc[r0..r0 + 4].copy_from_slice(&a);
                     r0 += 4;
                 }
             }
             for r in r0..l.n {
-                let acc = dot_codes(self.avx2, row(r), q) - sum_q;
-                dst[r] = act((acc as f32 / s) * l.scale[r] + l.bias[r], l.act);
+                acc[r] = dot_codes(self.avx2, row(r), q);
             }
+            crate::cpu_packed::epilogue(acc, sum_q, s, &l.scale, &l.bias, l.act, dst);
             std::mem::swap(&mut cur, &mut nxt);
         }
     }
@@ -660,7 +723,13 @@ impl CpuEngine {
 
     /// The SIMD path this engine dispatches to on this CPU.
     pub fn simd(&self) -> &'static str {
-        if self.vnni {
+        if self.packed.is_some() {
+            if crate::cpu_packed::available() {
+                "avx512-vnni-vbmi packed2"
+            } else {
+                "avx2 packed2"
+            }
+        } else if self.vnni {
             "avx512-vnni"
         } else if self.avx2 {
             "avx2"

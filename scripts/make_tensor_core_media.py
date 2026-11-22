@@ -9,16 +9,14 @@ output is a measured GPU result.
 from __future__ import annotations
 
 import argparse
-import math
 from pathlib import Path
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib import font_manager, patches, patheffects
+from matplotlib import font_manager, patches
 from matplotlib.animation import FFMpegWriter, FuncAnimation, PillowWriter
-from matplotlib.ticker import MultipleLocator
 
 ROOT = Path(__file__).resolve().parents[1]
 MEDIA = ROOT / "docs" / "media"
@@ -56,6 +54,7 @@ def scene_local(t: float, start: float, end: float) -> float:
 # ---------------------------------------------------------------------------
 # Report figures (white, quiet typography)
 # ---------------------------------------------------------------------------
+
 
 def setup_report_rc():
     plt.rcParams.update(
@@ -129,7 +128,7 @@ def fig_roofline(path: Path) -> None:
     fig, ax = plt.subplots(figsize=(8.4, 4.6), dpi=180)
     # Schematic roofline. Axes are qualitative; peaks are not measured on this work.
     # Intensity on log x, performance on log y, both in arbitrary units of "fp16-GEMV = 1".
-    xs = [10 ** p for p in [i / 40 for i in range(-48, 80)]]
+    xs = [10**p for p in [i / 40 for i in range(-48, 80)]]
     # Memory roof for fp16: P = I (normalized so the fp16 GEMV sits on this line).
     # Ternary weight traffic is 8× smaller, so the memory roof is 8× higher.
     # A schematic tensor-core compute roof is drawn at P = 8; ternary hits it at I = 1,
@@ -176,7 +175,7 @@ def fig_cpu(path: Path) -> None:
     vals = [CPU_DENSE_US, CPU_TERNARY_US]
     colors = ["#888", "#1b4d3e"]
     bars = ax.barh(labels, vals, color=colors, height=0.55, lw=0)
-    for bar, v in zip(bars, vals):
+    for bar, v in zip(bars, vals, strict=True):
         ax.text(v + 2, bar.get_y() + bar.get_height() / 2, f"{v:.2f} µs", va="center", fontsize=10)
     ax.set_xlim(0, 180)
     ax.set_xlabel("End-to-end latency, p50 (µs)")
@@ -203,8 +202,13 @@ def fig_dataflow(path: Path) -> None:
 
     def box(x, y, w, h, title, sub, fc="#f4f4f0"):
         r = patches.FancyBboxPatch(
-            (x, y), w, h, boxstyle="round,pad=0.03,rounding_size=0.08",
-            facecolor=fc, edgecolor="#222", linewidth=0.8,
+            (x, y),
+            w,
+            h,
+            boxstyle="round,pad=0.03,rounding_size=0.08",
+            facecolor=fc,
+            edgecolor="#222",
+            linewidth=0.8,
         )
         ax.add_patch(r)
         ax.text(x + w / 2, y + h * 0.64, title, ha="center", va="center", fontsize=10)
@@ -275,18 +279,21 @@ def dark_rc():
 
 
 def draw_header(ax, title: str, kicker: str, alpha: float = 1.0):
-    ax.text(0.04, 0.94, "TERNARY-GEMM", transform=ax.transAxes, fontsize=13,
-            color=ACCENT, alpha=alpha, fontweight="medium")
-    ax.text(0.04, 0.88, title, transform=ax.transAxes, fontsize=32,
-            color=FG, alpha=alpha, fontweight="medium")
-    ax.text(0.04, 0.81, kicker, transform=ax.transAxes, fontsize=16,
-            color=MUTED, alpha=alpha)
+    ax.text(
+        0.04, 0.94, "TERNARY-GEMM", transform=ax.transAxes, fontsize=13, color=ACCENT, alpha=alpha, fontweight="medium"
+    )
+    ax.text(0.04, 0.88, title, transform=ax.transAxes, fontsize=32, color=FG, alpha=alpha, fontweight="medium")
+    ax.text(0.04, 0.81, kicker, transform=ax.transAxes, fontsize=16, color=MUTED, alpha=alpha)
 
 
 def scene_pack(ax, t: float) -> None:
     a = scene_local(t, S1, S1 + 0.8)
-    draw_header(ax, "A ternary weight is two bits.",
-                "Each weight lives in {−1, 0, +1}. Sixteen of them fill one 32-bit word.", a)
+    draw_header(
+        ax,
+        "A ternary weight is two bits.",
+        "Each weight lives in {−1, 0, +1}. Sixteen of them fill one 32-bit word.",
+        a,
+    )
     weights = [1, -1, 0, 1, 1, 0, -1, 1, 0, 0, 1, -1, 1, 0, -1, 1]
     colors = {1: GREEN, 0: "#3d4450", -1: RED}
     labels = {1: "+1", 0: "0", -1: "−1"}
@@ -296,64 +303,121 @@ def scene_pack(ax, t: float) -> None:
         local = ease(max(0, min(1, appear * 16 - i)) if appear < 1 else 1)
         x = 0.8 + i * 1.15
         y = 5.6
-        r = patches.FancyBboxPatch((x, y), 1.0, 1.15, boxstyle="round,pad=0.02,rounding_size=0.12",
-                                   facecolor=colors[w], edgecolor="none", alpha=local * a)
+        r = patches.FancyBboxPatch(
+            (x, y),
+            1.0,
+            1.15,
+            boxstyle="round,pad=0.02,rounding_size=0.12",
+            facecolor=colors[w],
+            edgecolor="none",
+            alpha=local * a,
+        )
         ax.add_patch(r)
-        ax.text(x + 0.5, y + 0.58, labels[w], ha="center", va="center", fontsize=13,
-                color="white", alpha=local * a)
+        ax.text(x + 0.5, y + 0.58, labels[w], ha="center", va="center", fontsize=13, color="white", alpha=local * a)
     ax.text(9.6, 5.15, "16 weights", ha="center", color=MUTED, fontsize=12, alpha=appear * a)
 
     # Pack into bits
     pack = scene_local(t, S1 + 2.4, S1 + 4.2)
-    ax.text(9.6, 3.55, "one u32   ·   2 bits each   ·   c = w + 1", ha="center",
-            color=MUTED, fontsize=13, alpha=pack * a)
+    ax.text(
+        9.6, 3.55, "one u32   ·   2 bits each   ·   c = w + 1", ha="center", color=MUTED, fontsize=13, alpha=pack * a
+    )
     codes = [w + 1 for w in weights]
     bit_c = {0: RED, 1: "#3d4450", 2: GREEN}
     for i, c in enumerate(codes):
         x = 0.8 + i * 1.15
         y = 2.15 + (1 - pack) * 2.6
-        r = patches.FancyBboxPatch((x, y), 1.0, 1.0, boxstyle="round,pad=0.01,rounding_size=0.08",
-                                   facecolor=bit_c[c], edgecolor="#0c0e12", linewidth=0.8,
-                                   alpha=max(pack, 0.05) * a)
+        r = patches.FancyBboxPatch(
+            (x, y),
+            1.0,
+            1.0,
+            boxstyle="round,pad=0.01,rounding_size=0.08",
+            facecolor=bit_c[c],
+            edgecolor="#0c0e12",
+            linewidth=0.8,
+            alpha=max(pack, 0.05) * a,
+        )
         ax.add_patch(r)
-        ax.text(x + 0.5, y + 0.5, format(c, "02b"), ha="center", va="center",
-                fontsize=10, color="white", alpha=pack * a)
-    ax.text(9.6, 1.5, "fp16 would have used 256 bits for the same 16 weights.",
-            ha="center", color=GOLD, fontsize=15, alpha=scene_local(t, S1 + 4.4, S1 + 5.2) * a)
+        ax.text(
+            x + 0.5, y + 0.5, format(c, "02b"), ha="center", va="center", fontsize=10, color="white", alpha=pack * a
+        )
+    ax.text(
+        9.6,
+        1.5,
+        "fp16 would have used 256 bits for the same 16 weights.",
+        ha="center",
+        color=GOLD,
+        fontsize=15,
+        alpha=scene_local(t, S1 + 4.4, S1 + 5.2) * a,
+    )
 
 
 def scene_traffic(ax, t: float) -> None:
     a = scene_local(t, S2, S2 + 0.7)
-    draw_header(ax, "Eight times less weight traffic than fp16.",
-                "At batch 1 the GEMV is memory-bound on the weights. That 8× is a ceiling, not a measurement.", a)
+    draw_header(
+        ax,
+        "Eight times less weight traffic than fp16.",
+        "At batch 1 the GEMV is memory-bound on the weights. That 8× is a ceiling, not a measurement.",
+        a,
+    )
     # Two memory bars
     grow = scene_local(t, S2 + 0.8, S2 + 3.0)
     # fp16: 16 units, ternary: 2 units
-    ax.add_patch(patches.FancyBboxPatch((1.2, 5.1), 16 * grow, 1.15,
-                                       boxstyle="round,pad=0.02,rounding_size=0.1",
-                                       facecolor="#4a5160", edgecolor="none", alpha=a))
+    ax.add_patch(
+        patches.FancyBboxPatch(
+            (1.2, 5.1),
+            16 * grow,
+            1.15,
+            boxstyle="round,pad=0.02,rounding_size=0.1",
+            facecolor="#4a5160",
+            edgecolor="none",
+            alpha=a,
+        )
+    )
     ax.text(1.2, 6.45, "fp16 weights", color=MUTED, fontsize=14, alpha=a)
-    ax.text(1.2 + 16 * grow + 0.3, 5.65, "16 bits / weight" if grow > 0.95 else "",
-            va="center", color=FG, fontsize=14, alpha=a)
+    ax.text(
+        1.2 + 16 * grow + 0.3,
+        5.65,
+        "16 bits / weight" if grow > 0.95 else "",
+        va="center",
+        color=FG,
+        fontsize=14,
+        alpha=a,
+    )
 
-    ax.add_patch(patches.FancyBboxPatch((1.2, 3.1), 2 * max(grow, 0.02), 1.15,
-                                       boxstyle="round,pad=0.02,rounding_size=0.1",
-                                       facecolor=ACCENT, edgecolor="none", alpha=a))
+    ax.add_patch(
+        patches.FancyBboxPatch(
+            (1.2, 3.1),
+            2 * max(grow, 0.02),
+            1.15,
+            boxstyle="round,pad=0.02,rounding_size=0.1",
+            facecolor=ACCENT,
+            edgecolor="none",
+            alpha=a,
+        )
+    )
     ax.text(1.2, 4.45, "ternary weights", color=MUTED, fontsize=14, alpha=a)
-    ax.text(1.2 + 2 * max(grow, 0.02) + 0.3, 3.65, "2 bits / weight" if grow > 0.95 else "",
-            va="center", color=FG, fontsize=14, alpha=a)
+    ax.text(
+        1.2 + 2 * max(grow, 0.02) + 0.3,
+        3.65,
+        "2 bits / weight" if grow > 0.95 else "",
+        va="center",
+        color=FG,
+        fontsize=14,
+        alpha=a,
+    )
 
     reveal = scene_local(t, S2 + 3.2, S2 + 4.4)
-    ax.text(9.6, 2.05, "8×", ha="center", fontsize=72, color=GOLD, alpha=reveal * a,
-            fontweight="medium")
-    ax.text(9.6, 1.15, "theoretical bandwidth ceiling at batch 1",
-            ha="center", fontsize=16, color=MUTED, alpha=reveal * a)
+    ax.text(9.6, 2.05, "8×", ha="center", fontsize=72, color=GOLD, alpha=reveal * a, fontweight="medium")
+    ax.text(
+        9.6, 1.15, "theoretical bandwidth ceiling at batch 1", ha="center", fontsize=16, color=MUTED, alpha=reveal * a
+    )
 
 
 def scene_unpack(ax, t: float) -> None:
     a = scene_local(t, S3, S3 + 0.7)
-    draw_header(ax, "Unpack into tensor-core fragments.",
-                "Then issue mma.sync.aligned.m16n8k16 on sm_80, sm_89 and sm_120.", a)
+    draw_header(
+        ax, "Unpack into tensor-core fragments.", "Then issue mma.sync.aligned.m16n8k16 on sm_80, sm_89 and sm_120.", a
+    )
     stages = [
         (0.7, "2-bit word", "natural layout"),
         (5.3, "Unpack", "registers / smem\nw = c − 1"),
@@ -363,64 +427,150 @@ def scene_unpack(ax, t: float) -> None:
     prog = scene_local(t, S3 + 0.8, S3 + 5.5)
     for i, (x, title, sub) in enumerate(stages):
         on = ease(max(0.0, min(1.0, prog * 4 - i)))
-        ax.add_patch(patches.FancyBboxPatch((x, 2.3), 3.8, 3.3,
-                                           boxstyle="round,pad=0.04,rounding_size=0.18",
-                                           facecolor="#161a22", edgecolor=ACCENT if i == 3 else "#2a303c",
-                                           linewidth=1.2, alpha=on * a))
+        ax.add_patch(
+            patches.FancyBboxPatch(
+                (x, 2.3),
+                3.8,
+                3.3,
+                boxstyle="round,pad=0.04,rounding_size=0.18",
+                facecolor="#161a22",
+                edgecolor=ACCENT if i == 3 else "#2a303c",
+                linewidth=1.2,
+                alpha=on * a,
+            )
+        )
         ax.text(x + 1.9, 4.7, title, ha="center", fontsize=18, color=FG, alpha=on * a)
         ax.text(x + 1.9, 3.5, sub, ha="center", fontsize=13, color=MUTED, alpha=on * a, linespacing=1.5)
         if i < 3:
-            ax.annotate("", xy=(x + 4.15, 3.95), xytext=(x + 3.85, 3.95),
-                        arrowprops=dict(arrowstyle="->", color=ACCENT, lw=1.4,
-                                        mutation_scale=14),
-                        alpha=on * a)
-    ax.text(9.6, 1.4, "Prior art on this path:  TriRun  ·  BitBLAS W2A8",
-            ha="center", fontsize=15, color=GOLD, alpha=scene_local(t, S3 + 5.6, S3 + 6.4) * a)
+            ax.annotate(
+                "",
+                xy=(x + 4.15, 3.95),
+                xytext=(x + 3.85, 3.95),
+                arrowprops=dict(arrowstyle="->", color=ACCENT, lw=1.4, mutation_scale=14),
+                alpha=on * a,
+            )
+    ax.text(
+        9.6,
+        1.4,
+        "Prior art on this path:  TriRun  ·  BitBLAS W2A8",
+        ha="center",
+        fontsize=15,
+        color=GOLD,
+        alpha=scene_local(t, S3 + 5.6, S3 + 6.4) * a,
+    )
 
 
 def scene_cpu(ax, t: float) -> None:
     a = scene_local(t, S4, S4 + 0.7)
-    draw_header(ax, "Measured on the CPU, not the GPU.",
-                "Small signal model 256-1024-1024-16. One core, Xeon VM. 8.1×.", a)
+    draw_header(
+        ax, "Measured on the CPU, not the GPU.", "Small signal model 256-1024-1024-16. One core, Xeon VM. 8.1×.", a
+    )
     grow = scene_local(t, S4 + 0.8, S4 + 3.0)
     # Horizontal bars, scale to 147.78
     scale = 12.5 / CPU_DENSE_US
-    ax.add_patch(patches.FancyBboxPatch((3.2, 5.15), CPU_DENSE_US * scale * grow, 1.15,
-                                       boxstyle="round,pad=0.02,rounding_size=0.1",
-                                       facecolor="#4a5160", edgecolor="none", alpha=a))
+    ax.add_patch(
+        patches.FancyBboxPatch(
+            (3.2, 5.15),
+            CPU_DENSE_US * scale * grow,
+            1.15,
+            boxstyle="round,pad=0.02,rounding_size=0.1",
+            facecolor="#4a5160",
+            edgecolor="none",
+            alpha=a,
+        )
+    )
     ax.text(3.05, 5.72, "dense f32  AVX2", ha="right", va="center", fontsize=14, color=MUTED, alpha=a)
     if grow > 0.98:
-        ax.text(3.2 + CPU_DENSE_US * scale + 0.25, 5.72, f"{CPU_DENSE_US:.2f} µs",
-                va="center", fontsize=16, color=FG, alpha=a)
+        ax.text(
+            3.2 + CPU_DENSE_US * scale + 0.25,
+            5.72,
+            f"{CPU_DENSE_US:.2f} µs",
+            va="center",
+            fontsize=16,
+            color=FG,
+            alpha=a,
+        )
 
-    ax.add_patch(patches.FancyBboxPatch((3.2, 3.35), CPU_TERNARY_US * scale * grow, 1.15,
-                                       boxstyle="round,pad=0.02,rounding_size=0.1",
-                                       facecolor=GREEN, edgecolor="none", alpha=a))
+    ax.add_patch(
+        patches.FancyBboxPatch(
+            (3.2, 3.35),
+            CPU_TERNARY_US * scale * grow,
+            1.15,
+            boxstyle="round,pad=0.02,rounding_size=0.1",
+            facecolor=GREEN,
+            edgecolor="none",
+            alpha=a,
+        )
+    )
     ax.text(3.05, 3.92, "ternary SIMD\nAVX-512 VNNI", ha="right", va="center", fontsize=13, color=MUTED, alpha=a)
     if grow > 0.98:
-        ax.text(3.2 + CPU_TERNARY_US * scale + 0.25, 3.92, f"{CPU_TERNARY_US:.2f} µs",
-                va="center", fontsize=16, color=FG, alpha=a)
+        ax.text(
+            3.2 + CPU_TERNARY_US * scale + 0.25,
+            3.92,
+            f"{CPU_TERNARY_US:.2f} µs",
+            va="center",
+            fontsize=16,
+            color=FG,
+            alpha=a,
+        )
 
-    ax.text(9.6, 1.7, "This is a CPU result. GPU tensor-core latency has not been measured.",
-            ha="center", fontsize=15, color=GOLD, alpha=scene_local(t, S4 + 3.2, S4 + 4.2) * a)
+    ax.text(
+        9.6,
+        1.7,
+        "This is a CPU result. GPU tensor-core latency has not been measured.",
+        ha="center",
+        fontsize=15,
+        color=GOLD,
+        alpha=scene_local(t, S4 + 3.2, S4 + 4.2) * a,
+    )
 
 
 def scene_final(ax, t: float) -> None:
     a = scene_local(t, S5, S5 + 0.8)
     draw_header(ax, "", "", a)
-    ax.text(0.5, 0.70, "Tensor-core path", transform=ax.transAxes,
-            ha="center", fontsize=22, color=MUTED, alpha=a)
-    ax.text(0.5, 0.52, "up to 8× vs fp16", transform=ax.transAxes,
-            ha="center", fontsize=54, color=GOLD, alpha=a, fontweight="medium")
-    ax.text(0.5, 0.36, "theoretical ceiling, GPU benchmark pending",
-            transform=ax.transAxes, ha="center", fontsize=20, color=FG, alpha=a)
-    ax.text(0.5, 0.18, "./scripts/bench.sh --tensor-cores",
-            transform=ax.transAxes, ha="center", fontsize=16, color=ACCENT,
-            alpha=scene_local(t, S5 + 1.6, S5 + 2.4) * a,
-            fontfamily="DejaVu Sans Mono")
-    ax.text(0.5, 0.10, "github.com/shubhxho/ternary-gemm",
-            transform=ax.transAxes, ha="center", fontsize=13, color=MUTED,
-            alpha=scene_local(t, S5 + 1.6, S5 + 2.4) * a)
+    ax.text(0.5, 0.70, "Tensor-core path", transform=ax.transAxes, ha="center", fontsize=22, color=MUTED, alpha=a)
+    ax.text(
+        0.5,
+        0.52,
+        "up to 8× vs fp16",
+        transform=ax.transAxes,
+        ha="center",
+        fontsize=54,
+        color=GOLD,
+        alpha=a,
+        fontweight="medium",
+    )
+    ax.text(
+        0.5,
+        0.36,
+        "theoretical ceiling, GPU benchmark pending",
+        transform=ax.transAxes,
+        ha="center",
+        fontsize=20,
+        color=FG,
+        alpha=a,
+    )
+    ax.text(
+        0.5,
+        0.18,
+        "./scripts/bench.sh --tensor-cores",
+        transform=ax.transAxes,
+        ha="center",
+        fontsize=16,
+        color=ACCENT,
+        alpha=scene_local(t, S5 + 1.6, S5 + 2.4) * a,
+        fontfamily="DejaVu Sans Mono",
+    )
+    ax.text(
+        0.5,
+        0.10,
+        "github.com/shubhxho/ternary-gemm",
+        transform=ax.transAxes,
+        ha="center",
+        fontsize=13,
+        color=MUTED,
+        alpha=scene_local(t, S5 + 1.6, S5 + 2.4) * a,
+    )
 
 
 def draw_frame(ax, t: float) -> None:

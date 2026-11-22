@@ -6,7 +6,7 @@
 use std::process::Command;
 use ternary_gemm::autotune::kernel_name;
 use ternary_gemm::gpu::{
-    compile, compile_tensor_cores, BATCH_TILES, ROWS_PER_WARP, TENSOR_CORE_KERNELS,
+    compile, compile_ext, compile_tensor_cores, BATCH_TILES, ROWS_PER_WARP, TENSOR_CORE_KERNELS,
 };
 use ternary_gemm::tuning::{KernelConfig, SM120_I8_FUSED_REGS, SM120_I8_REGS};
 
@@ -129,4 +129,93 @@ fn compute_80_plus_has_tensor_core_kernels() {
             }
         }
     }
+}
+
+/// The extra GEMV kernels (cp.async, split-K, LUT, warp-specialized) compile for every sm_80+
+/// target, use the PTX features they are named for, and (with `PTXAS`) assemble without spills.
+#[test]
+fn ext_kernels_compile_for_sm80_through_sm120() {
+    for arch in [
+        "compute_80",
+        "compute_86",
+        "compute_89",
+        "compute_90",
+        "compute_120",
+        "compute_120a",
+    ] {
+        let src = match compile_ext(arch) {
+            Ok(p) => p.to_src(),
+            Err(e) => {
+                if std::env::var("TERNARY_REQUIRE_NVRTC").as_deref() == Ok("1") {
+                    panic!("TERNARY_REQUIRE_NVRTC=1 but ext NVRTC failed for {arch}: {e}");
+                }
+                eprintln!("SKIPPED (no NVRTC): {e}");
+                return;
+            }
+        };
+        for name in ternary_gemm::cuda_ext::EXT_KERNELS {
+            assert!(
+                src.contains(&format!(".entry {name}(")),
+                "{arch}: missing {name}"
+            );
+        }
+        for needle in [
+            "cp.async.cg.shared.global",
+            "cp.async.wait_group",
+            "bar.arrive",
+            "dp4a",
+        ] {
+            assert!(src.contains(needle), "{arch}: PTX lacks {needle}");
+        }
+        let Ok(ptxas) = std::env::var("PTXAS") else {
+            continue;
+        };
+        let sm = arch.replace("compute_", "sm_");
+        let dir = std::env::temp_dir().join(format!("tgemm-ext-{}-{arch}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("x.ptx");
+        std::fs::write(&p, &src).unwrap();
+        let o = Command::new(&ptxas)
+            .args(["-v", "-O3", &format!("--gpu-name={sm}"), "-o"])
+            .arg(dir.join("x.cubin"))
+            .arg(&p)
+            .output()
+            .expect("run ptxas");
+        let log = String::from_utf8_lossy(&o.stderr);
+        assert!(o.status.success(), "{arch}: {log}");
+        for line in log.lines().filter(|l| l.contains("bytes spill stores")) {
+            assert!(
+                line.contains(" 0 bytes spill stores, 0 bytes spill loads"),
+                "{arch}: {line}"
+            );
+        }
+        std::fs::remove_dir_all(dir).ok();
+    }
+}
+
+/// The hand-written PTX kernel assembles with ptxas for sm_61 .. sm_120 without spills.
+#[test]
+fn hand_written_ptx_assembles() {
+    let Ok(ptxas) = std::env::var("PTXAS") else {
+        eprintln!("SKIPPED (set PTXAS to assemble kernels/ternary_gemv.ptx)");
+        return;
+    };
+    let dir = std::env::temp_dir().join(format!("tgemm-hand-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let p = dir.join("hand.ptx");
+    std::fs::write(&p, ternary_gemm::cuda_ext::HAND_PTX).unwrap();
+    for sm in [
+        "sm_61", "sm_75", "sm_80", "sm_86", "sm_89", "sm_90", "sm_120",
+    ] {
+        let o = Command::new(&ptxas)
+            .args(["-v", "-O3", &format!("--gpu-name={sm}"), "-o"])
+            .arg(dir.join(format!("hand_{sm}.cubin")))
+            .arg(&p)
+            .output()
+            .expect("run ptxas");
+        let log = String::from_utf8_lossy(&o.stderr);
+        assert!(o.status.success(), "{sm}: {log}");
+        assert!(log.contains("0 bytes spill stores"), "{sm}: {log}");
+    }
+    std::fs::remove_dir_all(dir).ok();
 }
