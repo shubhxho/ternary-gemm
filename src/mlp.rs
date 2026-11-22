@@ -89,7 +89,7 @@ pub struct TernaryMlp {
 
 /// Per-token int8 quantization exactly as the kernels do it. Returns `(s, sum_q)`.
 pub fn quantize_into(x: &[f32], q: &mut [i8]) -> (f32, i32) {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
     if std::is_x86_feature_detected!("sse4.1") {
         // SAFETY: SSE4.1 detected (gives an inline round-to-nearest-even instead of a libm call).
         return unsafe { quantize_sse41(x, q) };
@@ -97,7 +97,7 @@ pub fn quantize_into(x: &[f32], q: &mut [i8]) -> (f32, i32) {
     quantize_generic(x, q)
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "avx2"))]
 #[target_feature(enable = "sse4.1")]
 unsafe fn quantize_sse41(x: &[f32], q: &mut [i8]) -> (f32, i32) {
     quantize_generic(x, q)
@@ -253,16 +253,17 @@ impl TernaryMlp {
 /// `sum(c[i] * q[i])` with codes `c = w + 1` in {0,1,2}. Callers subtract `sum(q)`.
 #[inline(always)]
 fn dot_codes_generic(c: &[u8], q: &[i8]) -> i32 {
+    let n = c.len().min(q.len());
+    let (cc, cr) = c[..n].as_chunks::<16>();
+    let (qc, qr) = q[..n].as_chunks::<16>();
     let mut acc = [0i32; 16];
-    let mut cc = c.chunks_exact(16);
-    let mut qc = q.chunks_exact(16);
-    for (x, y) in (&mut cc).zip(&mut qc) {
+    for (x, y) in cc.iter().zip(qc) {
         for i in 0..16 {
             acc[i] += x[i] as i32 * y[i] as i32;
         }
     }
     let mut s: i32 = acc.iter().sum();
-    for (x, y) in cc.remainder().iter().zip(qc.remainder()) {
+    for (x, y) in cr.iter().zip(qr) {
         s += *x as i32 * *y as i32;
     }
     s
@@ -270,7 +271,7 @@ fn dot_codes_generic(c: &[u8], q: &[i8]) -> i32 {
 
 /// AVX2: `vpmaddubsw` (u8 codes x i8 activations -> i16 pairs, at most 2*2*128 so no saturation)
 /// then `vpmaddwd` with ones -> i32. 32 multiply-adds per instruction pair.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "avx2"))]
 #[target_feature(enable = "avx2")]
 unsafe fn dot_codes_avx2(c: &[u8], q: &[i8]) -> i32 {
     use std::arch::x86_64::*;
@@ -307,7 +308,7 @@ unsafe fn dot_codes_avx2(c: &[u8], q: &[i8]) -> i32 {
 }
 
 /// Four rows at once against the same activations: each activation load is reused 4x.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "avx2"))]
 #[target_feature(enable = "avx2")]
 unsafe fn dot_codes4_avx2(c: [&[u8]; 4], q: &[i8]) -> [i32; 4] {
     use std::arch::x86_64::*;
@@ -344,7 +345,7 @@ unsafe fn dot_codes4_avx2(c: [&[u8]; 4], q: &[i8]) -> [i32; 4] {
 
 #[inline]
 fn dot_codes(avx2: bool, c: &[u8], q: &[i8]) -> i32 {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
     if avx2 {
         // SAFETY: callers only pass `avx2 = true` after runtime detection.
         return unsafe { dot_codes_avx2(c, q) };
@@ -355,22 +356,23 @@ fn dot_codes(avx2: bool, c: &[u8], q: &[i8]) -> i32 {
 
 #[inline(always)]
 fn dot_f32_generic(a: &[f32], b: &[f32]) -> f32 {
+    let n = a.len().min(b.len());
+    let (ac, ar) = a[..n].as_chunks::<16>();
+    let (bc, br) = b[..n].as_chunks::<16>();
     let mut acc = [0f32; 16];
-    let mut ac = a.chunks_exact(16);
-    let mut bc = b.chunks_exact(16);
-    for (x, y) in (&mut ac).zip(&mut bc) {
+    for (x, y) in ac.iter().zip(bc) {
         for i in 0..16 {
             acc[i] += x[i] * y[i];
         }
     }
     let mut s: f32 = acc.iter().sum();
-    for (x, y) in ac.remainder().iter().zip(bc.remainder()) {
+    for (x, y) in ar.iter().zip(br) {
         s += x * y;
     }
     s
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "avx2"))]
 #[target_feature(enable = "avx2,fma")]
 unsafe fn dot_f32_avx2(a: &[f32], b: &[f32]) -> f32 {
     use std::arch::x86_64::*;
@@ -407,7 +409,7 @@ unsafe fn dot_f32_avx2(a: &[f32], b: &[f32]) -> f32 {
 
 #[inline]
 fn dot_f32(avx2: bool, a: &[f32], b: &[f32]) -> f32 {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
     if avx2 {
         // SAFETY: callers only pass `avx2 = true` after runtime detection of AVX2 + FMA.
         return unsafe { dot_f32_avx2(a, b) };
@@ -418,7 +420,7 @@ fn dot_f32(avx2: bool, a: &[f32], b: &[f32]) -> f32 {
 
 /// Which SIMD path the CPU engines use.
 pub fn cpu_simd_level() -> &'static str {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
     if std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma") {
         return "avx2";
     }
@@ -440,9 +442,9 @@ impl CpuEngine {
     pub fn new(model: &TernaryMlp) -> Result<Self, String> {
         model.validate()?;
         let d = model.max_dim();
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
         let avx2 = std::is_x86_feature_detected!("avx2");
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(all(target_arch = "x86_64", feature = "avx2")))]
         let avx2 = false;
         let codes = model
             .layers
@@ -477,8 +479,9 @@ impl CpuEngine {
                 &mut nxt[..l.n]
             };
             let row = |r: usize| &codes[r * l.k..(r + 1) * l.k];
+            #[allow(unused_mut)] // only advanced by the AVX2 4-row path
             let mut r0 = 0;
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
             if self.avx2 {
                 while r0 + 4 <= l.n {
                     // SAFETY: AVX2 detected at construction.
@@ -528,9 +531,9 @@ impl DenseF32Mlp {
             })
             .collect();
         let d = model.max_dim();
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
         let avx2 = std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma");
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(all(target_arch = "x86_64", feature = "avx2")))]
         let avx2 = false;
         Self {
             layers,
