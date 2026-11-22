@@ -8,7 +8,7 @@
 //! * [`gpu`] (feature `cuda`, default): NVRTC-compiled CUDA kernels with a safe launch API, plus a cuBLAS FP16 baseline.
 //! * [`convert`] (feature `convert`): safetensors -> `.tgm` (absmean ternarization).
 //! * [`cpu`]: CPU W2A8 GEMM backend (no-GPU fallback, any batch, threaded), bit-exact.
-//! * [`format`]: the `.tgm` container for converted ternary models.
+//! * [`format`](mod@format): the `.tgm` container for converted ternary models.
 //! * [`mlp`]: small ternary MLPs (signal models): CPU reference, allocation-free SIMD CPU engine.
 //! * [`signal`] (feature `cuda`): latency-first GPU engines for those models (CUDA graph + pinned memory, and an
 //!   experimental persistent kernel), plus a cuBLAS FP16 baseline.
