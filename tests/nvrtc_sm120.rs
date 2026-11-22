@@ -1,0 +1,109 @@
+//! Blackwell (sm_120) compile checks: NVRTC must compile every kernel the autotuner can pick for
+//! `compute_120`, and if `PTXAS` points at a ptxas binary, the SASS register counts must match the
+//! tables the occupancy model uses (`tuning::SM120_I8_REGS` / `SM120_I8_FUSED_REGS`).
+//! Skipped when libnvrtc is missing unless `TERNARY_REQUIRE_NVRTC=1` (CI's nvrtc job sets it).
+
+use std::process::Command;
+use ternary_gemm::autotune::kernel_name;
+use ternary_gemm::gpu::{compile, BATCH_TILES, ROWS_PER_WARP};
+use ternary_gemm::tuning::{KernelConfig, SM120_I8_FUSED_REGS, SM120_I8_REGS};
+
+fn ptx(arch: &str) -> Option<String> {
+    match compile(arch) {
+        Ok(p) => Some(p.to_src()),
+        Err(e) => {
+            if std::env::var("TERNARY_REQUIRE_NVRTC").as_deref() == Ok("1") {
+                panic!("TERNARY_REQUIRE_NVRTC=1 but NVRTC failed: {e}");
+            }
+            eprintln!("SKIPPED (no NVRTC): {e}");
+            None
+        }
+    }
+}
+
+fn all_configs() -> Vec<(KernelConfig, usize)> {
+    let mut v = Vec::new();
+    for fused in [false, true] {
+        for &r in &ROWS_PER_WARP {
+            for &b in &BATCH_TILES {
+                v.push((
+                    KernelConfig {
+                        warps: 4,
+                        rows_per_warp: r,
+                        fused,
+                    },
+                    b,
+                ));
+            }
+        }
+    }
+    v
+}
+
+#[test]
+fn compute_120_has_every_tunable_kernel() {
+    for arch in ["compute_120", "compute_120a"] {
+        let Some(src) = ptx(arch) else { return };
+        for (cfg, b) in all_configs() {
+            let name = kernel_name(cfg, b);
+            assert!(
+                src.contains(&format!(".entry {name}(")),
+                "{arch}: missing {name}"
+            );
+        }
+    }
+}
+
+#[test]
+fn sm120_register_table_matches_ptxas() {
+    let Ok(ptxas) = std::env::var("PTXAS") else {
+        eprintln!("SKIPPED (set PTXAS to check sm_120 register counts)");
+        return;
+    };
+    let Some(src) = ptx("compute_120") else {
+        return;
+    };
+    let dir = std::env::temp_dir().join(format!("tgemm-sm120-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let p = dir.join("k.ptx");
+    std::fs::write(&p, src).unwrap();
+    let o = Command::new(ptxas)
+        .args(["-v", "-O3", "--gpu-name=sm_120", "-o"])
+        .arg(dir.join("k.cubin"))
+        .arg(&p)
+        .output()
+        .expect("run ptxas");
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let log = String::from_utf8_lossy(&o.stderr);
+    let mut regs = std::collections::HashMap::new();
+    let mut cur = String::new();
+    for line in log.lines() {
+        if let Some(i) = line.find("Compiling entry function '") {
+            let rest = &line[i + 26..];
+            cur = rest[..rest.find('\'').unwrap()].to_string();
+        } else if let Some(i) = line.find("Used ") {
+            let n: u32 = line[i + 5..]
+                .split_whitespace()
+                .next()
+                .unwrap()
+                .parse()
+                .unwrap();
+            regs.insert(cur.clone(), n);
+        }
+    }
+    for (cfg, b) in all_configs() {
+        let bi = BATCH_TILES.iter().position(|&t| t == b).unwrap();
+        let ri = ROWS_PER_WARP
+            .iter()
+            .position(|&r| r == cfg.rows_per_warp)
+            .unwrap();
+        let table = if cfg.fused {
+            SM120_I8_FUSED_REGS
+        } else {
+            SM120_I8_REGS
+        };
+        let name = kernel_name(cfg, b);
+        assert_eq!(regs.get(&name), Some(&table[bi][ri]), "{name}");
+    }
+    std::fs::remove_dir_all(dir).ok();
+}

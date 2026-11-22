@@ -77,3 +77,7 @@ required-features = ["cuda"]
 [[bin]]
 name = "autotune"
 required-features = ["cuda"]
+
+[[test]]
+name = "nvrtc_sm120"
+required-features = ["cuda"]
