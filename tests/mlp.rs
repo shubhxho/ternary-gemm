@@ -138,3 +138,15 @@ fn validation_rejects_bad_models() {
     nt.layers[0].w[0] = 2;
     assert!(nt.validate().is_err());
 }
+
+#[test]
+fn engine_reports_simd_path() {
+    let m = TernaryMlp::random(&[64, 64], Act::Relu, 1).unwrap();
+    let e = CpuEngine::new(&m).unwrap();
+    let s = e.simd();
+    assert!(["portable", "avx2", "avx512-vnni"].contains(&s), "{s}");
+    if cfg!(not(any(feature = "avx2", feature = "avx512"))) {
+        assert_eq!(s, "portable");
+    }
+    eprintln!("CpuEngine SIMD path on this machine: {s}");
+}
