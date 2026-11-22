@@ -1,0 +1,19 @@
+[package]
+name = "ternary-gemm-python"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Python bindings for ternary-gemm (CPU paths)"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "_ternary_gemm"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.30", features = ["extension-module", "abi3-py310"] }
+half = "2"
+ternary-gemm = { path = "../..", default-features = false, features = ["avx2"] }
+
+# Built separately (maturin); not part of the main crate's build.
+[workspace]
