@@ -24,6 +24,9 @@ cuda = ["dep:cudarc"]
 # x86_64 SIMD fast paths for the CPU engines (SSE4.1 quantize, AVX2 int8/f32 dots), selected at
 # runtime with CPU feature detection. Disable to force the portable code (e.g. to debug).
 avx2 = []
+# AVX-512 VNNI (vpdpbusd) path for CpuEngine, runtime-detected. Needs rustc >= 1.89 (stable
+# AVX-512 intrinsics), so it is opt-in above the 1.88 MSRV.
+avx512 = ["avx2"]
 
 [[bin]]
 name = "bench"

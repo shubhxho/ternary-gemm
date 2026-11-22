@@ -343,6 +343,39 @@ unsafe fn dot_codes4_avx2(c: [&[u8]; 4], q: &[i8]) -> [i32; 4] {
     out
 }
 
+/// AVX-512 VNNI: `vpdpbusd` multiplies u8 codes by i8 activations and accumulates groups of 4
+/// straight into i32 lanes, 64 multiply-adds per instruction; the K tail uses a masked load.
+/// Four rows share each activation load.
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+#[target_feature(enable = "avx512f,avx512bw,avx512vnni")]
+#[clippy::msrv = "1.89"] // AVX-512 intrinsics; the avx512 feature documents this requirement
+unsafe fn dot_codes4_vnni(c: [&[u8]; 4], q: &[i8]) -> [i32; 4] {
+    use std::arch::x86_64::*;
+    let n = q.len();
+    let mut acc = [_mm512_setzero_si512(); 4];
+    let mut i = 0;
+    while i < n {
+        let rem = n - i;
+        let mask: u64 = if rem >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << rem) - 1
+        };
+        let qv = _mm512_maskz_loadu_epi8(mask, q.as_ptr().add(i));
+        for r in 0..4 {
+            let cv = _mm512_maskz_loadu_epi8(mask, c[r].as_ptr().add(i) as *const i8);
+            acc[r] = _mm512_dpbusd_epi32(acc[r], cv, qv);
+        }
+        i += 64;
+    }
+    [
+        _mm512_reduce_add_epi32(acc[0]),
+        _mm512_reduce_add_epi32(acc[1]),
+        _mm512_reduce_add_epi32(acc[2]),
+        _mm512_reduce_add_epi32(acc[3]),
+    ]
+}
+
 #[inline]
 fn dot_codes(avx2: bool, c: &[u8], q: &[i8]) -> i32 {
     #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
@@ -420,11 +453,22 @@ fn dot_f32(avx2: bool, a: &[f32], b: &[f32]) -> f32 {
 
 /// Which SIMD path the CPU engines use.
 pub fn cpu_simd_level() -> &'static str {
+    #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+    if has_vnni() {
+        return "avx512-vnni";
+    }
     #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
     if std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma") {
         return "avx2";
     }
     "portable (autovectorized baseline ISA)"
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+fn has_vnni() -> bool {
+    std::is_x86_feature_detected!("avx512f")
+        && std::is_x86_feature_detected!("avx512bw")
+        && std::is_x86_feature_detected!("avx512vnni")
 }
 
 /// Allocation-free CPU inference for a [`TernaryMlp`]. Bit-identical to the reference.
@@ -436,6 +480,8 @@ pub struct CpuEngine {
     bufs: [Vec<f32>; 2],
     q: Vec<i8>,
     avx2: bool,
+    #[cfg_attr(not(all(target_arch = "x86_64", feature = "avx512")), allow(dead_code))]
+    vnni: bool,
 }
 
 impl CpuEngine {
@@ -446,6 +492,10 @@ impl CpuEngine {
         let avx2 = std::is_x86_feature_detected!("avx2");
         #[cfg(not(all(target_arch = "x86_64", feature = "avx2")))]
         let avx2 = false;
+        #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+        let vnni = has_vnni();
+        #[cfg(not(all(target_arch = "x86_64", feature = "avx512")))]
+        let vnni = false;
         let codes = model
             .layers
             .iter()
@@ -457,6 +507,7 @@ impl CpuEngine {
             bufs: [vec![0.0; d], vec![0.0; d]],
             q: vec![0; d],
             avx2,
+            vnni,
         })
     }
 
@@ -479,8 +530,22 @@ impl CpuEngine {
                 &mut nxt[..l.n]
             };
             let row = |r: usize| &codes[r * l.k..(r + 1) * l.k];
-            #[allow(unused_mut)] // only advanced by the AVX2 4-row path
+            #[allow(unused_mut)] // only advanced by the SIMD 4-row paths
             let mut r0 = 0;
+            #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+            if self.vnni {
+                while r0 + 4 <= l.n {
+                    // SAFETY: AVX-512 F/BW/VNNI detected at construction.
+                    let a = unsafe {
+                        dot_codes4_vnni([row(r0), row(r0 + 1), row(r0 + 2), row(r0 + 3)], q)
+                    };
+                    for j in 0..4 {
+                        let r = r0 + j;
+                        dst[r] = act(((a[j] - sum_q) as f32 / s) * l.scale[r] + l.bias[r], l.act);
+                    }
+                    r0 += 4;
+                }
+            }
             #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
             if self.avx2 {
                 while r0 + 4 <= l.n {
@@ -505,6 +570,17 @@ impl CpuEngine {
 
     pub fn model(&self) -> &TernaryMlp {
         &self.model
+    }
+
+    /// The SIMD path this engine dispatches to on this CPU.
+    pub fn simd(&self) -> &'static str {
+        if self.vnni {
+            "avx512-vnni"
+        } else if self.avx2 {
+            "avx2"
+        } else {
+            "portable"
+        }
     }
 }
 
