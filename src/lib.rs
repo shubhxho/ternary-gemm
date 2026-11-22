@@ -12,11 +12,14 @@
 //! * [`looped`]: a weight-shared, recurrent-depth ternary transformer (CPU + GPU backends).
 //! * [`mlp`]: small ternary MLPs (signal models): CPU reference, allocation-free SIMD CPU engine.
 //! * [`tuning`]: per-architecture profiles (RTX 5090 / sm_120 first), occupancy + roofline model.
+//! * [`autotune`] (feature `cuda`): times model-ranked launch configs on the device, CSV cache.
 //! * [`signal`] (feature `cuda`): latency-first GPU engines for those models (CUDA graph + pinned memory, and an
 //!   experimental persistent kernel), plus a cuBLAS FP16 baseline.
 
 #![allow(clippy::needless_range_loop)]
 
+#[cfg(feature = "cuda")]
+pub mod autotune;
 #[cfg(feature = "convert")]
 pub mod convert;
 pub mod cpu;
