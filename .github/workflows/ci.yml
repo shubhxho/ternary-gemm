@@ -102,7 +102,9 @@ jobs:
           NV=$(python -c "import nvidia; print(list(nvidia.__path__)[0])")
           echo "LD_LIBRARY_PATH=$NV/cuda_nvrtc/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
           echo "PTXAS=$NV/cuda_nvcc/bin/ptxas" >> "$GITHUB_ENV"
-      - run: cargo run --release --bin compile_check
+      - run: cargo run --release --bin compile_check -- compute_80 compute_86 compute_89 compute_90 compute_120 compute_120a
+      - name: sm_120 kernel set + register table vs ptxas
+        run: TERNARY_REQUIRE_NVRTC=1 cargo test --release --test nvrtc_sm120
 
   deny:
     name: cargo-deny (advisories, licenses, bans, sources)
