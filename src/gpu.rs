@@ -297,6 +297,11 @@ impl Gpu {
         &self.funcs[name]
     }
 
+    /// Registers per thread the driver reports for a loaded kernel (e.g. `"ternary_i8_b16_r4"`).
+    pub fn kernel_regs(&self, name: &str) -> Option<u32> {
+        self.funcs.get(name)?.num_regs().ok().map(|r| r as u32)
+    }
+
     pub fn synchronize(&self) -> Result<()> {
         Ok(self.stream.synchronize()?)
     }
