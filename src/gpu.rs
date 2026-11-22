@@ -161,7 +161,13 @@ fn batch_tile(batch: usize) -> Result<usize> {
         .copied()
         .find(|&t| t >= batch)
         .filter(|_| batch > 0)
-        .ok_or_else(|| Error::Shape(format!("batch={batch} must be in 1..=16")))
+        .ok_or_else(|| {
+            Error::Shape(format!(
+                "batch={batch} must be in 1..=16 per launch (the kernels' largest batch tile); \
+                 split larger batches into chunks of 16 (as looped::GpuBackend does) or use \
+                 cpu::CpuTernary, which takes any batch"
+            ))
+        })
 }
 
 impl Gpu {
@@ -432,10 +438,14 @@ impl Gpu {
         residual: Option<&CudaSlice<f16>>,
         out: &CudaSlice<f16>,
     ) -> Result<()> {
-        if !w.k.is_multiple_of(K_ALIGN)
-            || w.permuted.len() != w.n * w.k / 16
-            || w.row_scale.len() != w.n
-        {
+        if !w.k.is_multiple_of(K_ALIGN) {
+            return shape_err(format!(
+                "K={} must be a multiple of {K_ALIGN} (one 16-byte load = 64 weights per lane); \
+                 zero-pad K (zero weights and zero activations leave the result unchanged)",
+                w.k
+            ));
+        }
+        if w.permuted.len() != w.n * w.k / 16 || w.row_scale.len() != w.n {
             return shape_err("inconsistent GpuTernary");
         }
         if out.len() < batch * w.n {
