@@ -48,10 +48,10 @@ jobs:
       # No GPU on hosted runners: GPU tests print SKIPPED and pass; CPU reference,
       # kernel emulation and signal-model tests run for real.
       - run: cargo test --release --all-targets
-      - name: CPU-only build (no cuda feature)
+      - name: CPU-only build with SIMD (no cuda feature)
+        run: cargo test --release --no-default-features --features avx2
+      - name: CPU-only, portable code paths (no SIMD feature)
         run: cargo test --release --no-default-features
-      - name: Portable code paths (no SIMD feature)
-        run: cargo test --release --no-default-features --test mlp --test cpu_reference
 
   msrv:
     name: MSRV (1.88)
