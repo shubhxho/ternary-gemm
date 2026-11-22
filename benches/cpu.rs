@@ -64,5 +64,36 @@ fn packing(c: &mut Criterion) {
     g.finish();
 }
 
-criterion_group!(benches, quantize, signal_models, packing);
+fn looped(c: &mut Criterion) {
+    use ternary_gemm::looped::*;
+    let cfg = BlockConfig {
+        d_model: 256,
+        n_heads: 4,
+        d_ff: 1024,
+    };
+    let tokens = 8;
+    let x: Vec<half::f16> = (0..tokens * cfg.d_model)
+        .map(|i| half::f16::from_f32(((i * 31) % 200) as f32 / 100.0 - 1.0))
+        .collect();
+    let mut g = c.benchmark_group("looped_forward_d256_t8");
+    for loops in [1usize, 4, 8] {
+        let m = LoopedTransformer::random(
+            cfg,
+            LoopConfig {
+                loops,
+                inject: Inject::Add,
+                halting: None,
+            },
+            1,
+        )
+        .unwrap();
+        let mut be = CpuBackend::new(&m.block, None);
+        g.bench_with_input(BenchmarkId::from_parameter(loops), &loops, |b, _| {
+            b.iter(|| m.forward(&mut be, &x, tokens).unwrap())
+        });
+    }
+    g.finish();
+}
+
+criterion_group!(benches, quantize, signal_models, packing, looped);
 criterion_main!(benches);
