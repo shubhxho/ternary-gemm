@@ -1,0 +1,8 @@
+# Opt-in: never cloned by default (update = none), shallow when you do fetch it.
+#   git submodule update --init --depth 1 --checkout third_party/linux
+[submodule "third_party/linux"]
+	path = third_party/linux
+	url = https://github.com/torvalds/linux.git
+	branch = master
+	shallow = true
+	update = none
