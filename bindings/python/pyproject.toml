@@ -7,7 +7,7 @@ name = "ternary-gemm"
 version = "0.1.0"
 description = "Ternary (BitNet b1.58) W2A8 GEMM, signal models and a looped transformer: CPU bindings"
 requires-python = ">=3.10"
-license = { text = "MIT OR Apache-2.0" }
+license = { text = "MIT" }
 classifiers = ["Programming Language :: Rust", "Programming Language :: Python :: 3"]
 
 [project.optional-dependencies]

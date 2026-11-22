@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 description = "Python bindings for ternary-gemm (CPU paths)"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 
 [lib]
 name = "_ternary_gemm"
