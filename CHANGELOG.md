@@ -33,6 +33,7 @@ All notable changes are listed here. The format follows
 * FPGA skeleton: ternary dot/MAC RTL, HLS C++ kernel, self-checking testbenches.
 * `third_party/linux` submodule (shallow, `update = none`) and `scripts/linux_tools.sh`.
 * Docs: ARCHITECTURE, LOOPED, RTX5090, ENERGY, HARDWARE, LINUX.
+* `bench/solar`: reproducible Paradigm Solar vs solc benchmark (pinned compiler and OpenZeppelin / Uniswap v3/v4 corpora), with measured median/p95 times, peak RSS, and a chart.
 
 ### Changed
 * GPU shape errors now say how to proceed (chunk batches > 16, zero-pad K, or use the CPU
