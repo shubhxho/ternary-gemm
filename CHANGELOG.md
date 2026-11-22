@@ -7,6 +7,15 @@ All notable changes are listed here. The format follows
 ## [Unreleased]
 
 ### Added
+* Tensor-core path for ternary GEMM/GEMV (sm_80+, including sm_89 and sm_120): unpack 2-bit
+  natural-layout weights into int8/fp16 fragments and issue PTX `mma.sync.aligned.m16n8k16`,
+  in the style of TriRun / BitBLAS W2A8. Selectable via `Launch::tensor_core` / `Backend::TensorCore`
+  and included in the autotuner search space. CPU fragment-level reference is bit-exact on the
+  int8 path (`tests/tensor_core.rs`); GPU tests are skipped when no device is present.
+  `./scripts/bench.sh --tensor-cores` verifies and times the path. The 8× vs fp16 figure at
+  batch 1 is documented as a theoretical bandwidth ceiling, not a measured GPU result.
+  Docs: `docs/TENSOR_CORES.md`, report `docs/reports/tensor-core-ternary.{md,html}`,
+  explainer video `docs/media/tensor-core-explainer.mp4`.
 * GitHub Actions CI: fmt, clippy `-D warnings` over the feature matrix, tests on Linux and macOS,
   MSRV 1.88, rustdoc `-D warnings`, NVRTC/ptxas compile check for sm_80..sm_120 (+ sm_120a and a
   register-table test), cargo-deny, ruff, fuzz smoke, FPGA testbenches, Python wheel + pytest,
