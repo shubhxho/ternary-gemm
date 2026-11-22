@@ -13,6 +13,7 @@
 //! * [`looped`]: a weight-shared, recurrent-depth ternary transformer (CPU + GPU backends).
 //! * [`mlp`]: small ternary MLPs (signal models): CPU reference, allocation-free SIMD CPU engine.
 //! * [`results`]: environment capture + JSON writer for benchmark results (`docs/results-schema.json`).
+//! * [`tensor_core`]: CPU reference for the sm_80+ tensor-core path (2-bit unpack into mma.sync fragments).
 //! * [`tuning`]: per-architecture profiles (RTX 5090 / sm_120 first), occupancy + roofline model.
 //! * [`autotune`] (feature `cuda`): times model-ranked launch configs on the device, CSV cache.
 //! * [`signal`] (feature `cuda`): latency-first GPU engines for those models (CUDA graph + pinned memory, and an
@@ -36,6 +37,7 @@ pub mod reference;
 pub mod results;
 #[cfg(feature = "cuda")]
 pub mod signal;
+pub mod tensor_core;
 pub mod tuning;
 
 pub use pack::{quantize_absmean, PackedTernary};
