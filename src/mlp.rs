@@ -451,7 +451,7 @@ unsafe fn dot_codes4_vnni(c: [&[u8]; 4], q: &[i8]) -> [i32; 4] {
 }
 
 #[inline]
-fn dot_codes(avx2: bool, c: &[u8], q: &[i8]) -> i32 {
+pub(crate) fn dot_codes(avx2: bool, c: &[u8], q: &[i8]) -> i32 {
     #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
     if avx2 {
         // SAFETY: callers only pass `avx2 = true` after runtime detection.

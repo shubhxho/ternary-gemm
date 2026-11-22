@@ -6,12 +6,14 @@
 //! * [`pack`]: absmean weight quantization and the 2-bit packed layouts.
 //! * [`reference`](mod@reference): pure-Rust CPU reference (correctness oracle).
 //! * [`gpu`] (feature `cuda`, default): NVRTC-compiled CUDA kernels with a safe launch API, plus a cuBLAS FP16 baseline.
+//! * [`cpu`]: CPU W2A8 GEMM backend (no-GPU fallback, any batch, threaded), bit-exact.
 //! * [`mlp`]: small ternary MLPs (signal models): CPU reference, allocation-free SIMD CPU engine.
 //! * [`signal`] (feature `cuda`): latency-first GPU engines for those models (CUDA graph + pinned memory, and an
 //!   experimental persistent kernel), plus a cuBLAS FP16 baseline.
 
 #![allow(clippy::needless_range_loop)]
 
+pub mod cpu;
 #[cfg(feature = "cuda")]
 pub mod gpu;
 pub mod mlp;
