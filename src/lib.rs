@@ -27,6 +27,7 @@ pub mod autotune;
 pub mod convert;
 pub mod cpu;
 pub mod cpu_packed;
+pub mod cuda_ext;
 pub mod energy;
 pub mod format;
 #[cfg(feature = "cuda")]
