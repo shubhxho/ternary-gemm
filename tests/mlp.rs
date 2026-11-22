@@ -150,3 +150,23 @@ fn engine_reports_simd_path() {
     }
     eprintln!("CpuEngine SIMD path on this machine: {s}");
 }
+
+#[test]
+fn simd_quantize_matches_scalar_oracle() {
+    use ternary_gemm::mlp::quantize_scalar;
+    let mut rng = StdRng::seed_from_u64(11);
+    for k in [1usize, 7, 8, 31, 32, 33, 64, 100, 255, 256, 1024, 4096] {
+        for x in inputs(&mut rng, k) {
+            let (mut a, mut b) = (vec![0i8; k], vec![0i8; k]);
+            let ra = quantize_into(&x, &mut a);
+            let rb = quantize_scalar(&x, &mut b);
+            assert_eq!((ra.0.to_bits(), ra.1), (rb.0.to_bits(), rb.1), "k={k}");
+            assert_eq!(a, b, "k={k}");
+        }
+        // exact .5 ties must round to even in every path
+        let x: Vec<f32> = (0..k).map(|i| (i as f32 - k as f32 / 2.0) * 0.5).collect();
+        let (mut a, mut b) = (vec![0i8; k], vec![0i8; k]);
+        assert_eq!(quantize_into(&x, &mut a).1, quantize_scalar(&x, &mut b).1);
+        assert_eq!(a, b);
+    }
+}
