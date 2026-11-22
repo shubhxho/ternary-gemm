@@ -128,3 +128,20 @@ jobs:
       - uses: astral-sh/ruff-action@v3
         with:
           args: format --check scripts
+
+  fuzz:
+    name: fuzz smoke (nightly, 30 s per target)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - run: cargo install cargo-fuzz --locked
+      - name: Run each target
+        working-directory: fuzz
+        run: |
+          for t in tgm_parse pack_roundtrip quantize_simd; do
+            cargo fuzz run "$t" -- -max_total_time=30
+          done
