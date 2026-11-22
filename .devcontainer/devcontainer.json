@@ -1,0 +1,20 @@
+{
+  "name": "ternary-gemm (CUDA 12.8 + Rust)",
+  "build": { "dockerfile": "../Dockerfile", "context": ".." },
+  // Remove "--gpus" if the host has no NVIDIA GPU / container toolkit; GPU tests then skip.
+  "runArgs": ["--gpus", "all"],
+  "workspaceFolder": "/work",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/work,type=bind",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "nvidia.nsight-vscode-edition",
+        "charliermarsh.ruff",
+        "mshr-h.veriloghdl"
+      ],
+      "settings": { "rust-analyzer.cargo.features": ["cuda", "avx2"] }
+    }
+  },
+  "postCreateCommand": "git config core.hooksPath scripts/hooks && cargo fetch"
+}
