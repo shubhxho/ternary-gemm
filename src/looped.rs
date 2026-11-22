@@ -25,7 +25,7 @@
 
 use crate::cpu::CpuTernary;
 use crate::pack::{quantize_absmean, PackedTernary, K_ALIGN};
-use crate::reference::{quantize_acts, QuantizedActs};
+use crate::reference::QuantizedActs;
 use half::f16;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
@@ -396,7 +396,7 @@ impl Backend for CpuBackend {
         k: usize,
         gamma: Option<&[f16]>,
     ) -> Result<QuantizedActs, String> {
-        Ok(quantize_acts(x, tokens, k, gamma, RMS_EPS))
+        Ok(crate::cpu::quantize_acts(x, tokens, k, gamma, RMS_EPS))
     }
     fn gemm(
         &mut self,
