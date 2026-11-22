@@ -43,10 +43,10 @@ if ! have_lib libnvrtc.so || ! have_lib libcublas.so; then
 fi
 
 say "Build"
-cargo build --release --all-targets
+cargo build --release --all-targets --features nvml
 
 say "Correctness: CPU reference + kernel-index emulation + GPU vs CPU (GPU required)"
-TERNARY_REQUIRE_GPU=1 cargo test --release -- --test-threads=1
+TERNARY_REQUIRE_GPU=1 cargo test --release --features nvml -- --test-threads=1
 
 mkdir -p results
 GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1 | tr ' /' '__')
@@ -87,7 +87,7 @@ fi
 
 say "Signal-model latency (batch 1, host -> signal -> host) -> $STEM-latency.md"
 PIN=(); command -v taskset >/dev/null && PIN=(taskset -c "${PIN_CORE:-2}")
-"${PIN[@]}" ./target/release/latency --csv "$STEM-latency.csv" ${LATENCY_ARGS:-} | tee "$STEM-latency.md"
+"${PIN[@]}" ./target/release/latency --csv "$STEM-latency.csv" --energy ${LATENCY_ARGS:-} | tee "$STEM-latency.md"
 if LCHARTS=$($PY scripts/plot_latency.py "$STEM-latency.csv"); then
   { echo; echo "## Charts (measured)"; echo; for c in $LCHARTS; do echo "![]($(basename "$c"))"; done; } >> "$STEM-latency.md"
   echo "$LCHARTS"
