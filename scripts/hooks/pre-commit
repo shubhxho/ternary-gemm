@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Pre-commit: formatting and clippy on staged Rust changes. Install with `make hooks`.
+# Skip once with `git commit --no-verify` if you really must.
+set -euo pipefail
+if git diff --cached --name-only --diff-filter=ACM | grep -qE '\.rs$|Cargo\.(toml|lock)$'; then
+  cargo fmt --all --check || { echo "pre-commit: run 'cargo fmt --all'"; exit 1; }
+  cargo clippy --all-targets --quiet -- -D warnings
+fi
+if git diff --cached --name-only --diff-filter=ACM | grep -qE '^scripts/.*\.py$'; then
+  if command -v ruff >/dev/null; then ruff check scripts; fi
+fi
