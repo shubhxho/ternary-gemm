@@ -4,6 +4,7 @@
 usage: plot_latency.py results/<run>.csv -> results/<run>-tail.png, results/<run>-hist-<model>.png
 Only numbers present in the CSV are plotted; titles name the CPU / GPU they were measured on.
 """
+
 import csv
 import os
 import sys
@@ -14,8 +15,16 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-plt.rcParams.update({"font.size": 9, "axes.spines.top": False, "axes.spines.right": False,
-                     "axes.titleweight": "bold", "figure.dpi": 150, "savefig.bbox": "tight"})
+plt.rcParams.update(
+    {
+        "font.size": 9,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+        "axes.titleweight": "bold",
+        "figure.dpi": 150,
+        "savefig.bbox": "tight",
+    }
+)
 STYLE = {
     "CPU ternary scalar reference": ("#bdc1c6", ":"),
     "CPU ternary SIMD (CpuEngine)": ("#1a73e8", "-"),
@@ -49,7 +58,7 @@ def main(path):
     out = []
     models = list(lat)
     fig, axes = plt.subplots(1, len(models), figsize=(4.6 * len(models), 3.8), squeeze=False)
-    for ax, m in zip(axes[0], models):
+    for ax, m in zip(axes[0], models, strict=False):
         for p, vals in lat[m].items():
             c, ls = STYLE.get(p, (None, "-"))
             ax.plot(PCTS, vals, marker="o", ms=3, color=c, ls=ls, label=p)
