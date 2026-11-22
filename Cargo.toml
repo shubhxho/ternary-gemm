@@ -16,6 +16,13 @@ cudarc = { version = "0.19", optional = true, default-features = false, features
 half = "2"
 rand = "0.9"
 
+[dev-dependencies]
+criterion = { version = "0.7", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "cpu"
+harness = false
+
 [features]
 default = ["cuda", "avx2"]
 # GPU backend: NVRTC-compiled kernels via cudarc (dlopen'ed at runtime, no toolkit needed to build).
