@@ -461,6 +461,18 @@ pub(crate) fn dot_codes(avx2: bool, c: &[u8], q: &[i8]) -> i32 {
     dot_codes_generic(c, q)
 }
 
+/// Dot products of four code rows against the same activations (each activation load reused 4x).
+#[inline]
+pub(crate) fn dot_codes4(avx2: bool, c: [&[u8]; 4], q: &[i8]) -> [i32; 4] {
+    #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
+    if avx2 {
+        // SAFETY: callers only pass `avx2 = true` after runtime detection; rows are >= q.len().
+        return unsafe { dot_codes4_avx2(c, q) };
+    }
+    let _ = avx2;
+    c.map(|row| dot_codes_generic(row, q))
+}
+
 #[inline(always)]
 fn dot_f32_generic(a: &[f32], b: &[f32]) -> f32 {
     let n = a.len().min(b.len());

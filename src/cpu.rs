@@ -62,20 +62,36 @@ impl CpuTernary {
         let (n, k, batch) = (self.n, self.k, a.batch);
         // Row-major [n][batch] scratch so each thread owns a contiguous block of rows.
         let mut yt = vec![f16::ZERO; n * batch];
+        let epilogue = |r: usize, b: usize, acc: i32| {
+            let mut t = (acc - a.sum[b]) as f32;
+            t /= a.s[b];
+            t *= self.row_scale[r];
+            if let Some(res) = residual {
+                t += res[b * n + r].to_f32();
+            }
+            f16::from_f32(t)
+        };
         let rows = |r0: usize, out: &mut [f16]| {
-            for (i, o) in out.chunks_mut(batch).enumerate() {
+            let nrows = out.len() / batch.max(1);
+            let row = |r: usize| &self.codes[r * k..(r + 1) * k];
+            let mut i = 0;
+            // Four rows per pass so every activation vector load feeds four dot products.
+            while i + 4 <= nrows {
                 let r = r0 + i;
-                let row = &self.codes[r * k..(r + 1) * k];
-                for (b, ob) in o.iter_mut().enumerate() {
-                    let xb = &a.q[b * k..(b + 1) * k];
-                    let acc = crate::mlp::dot_codes(self.avx2, row, xb) - a.sum[b];
-                    let mut t = acc as f32;
-                    t /= a.s[b];
-                    t *= self.row_scale[r];
-                    if let Some(res) = residual {
-                        t += res[b * n + r].to_f32();
+                let c = [row(r), row(r + 1), row(r + 2), row(r + 3)];
+                for b in 0..batch {
+                    let acc = crate::mlp::dot_codes4(self.avx2, c, &a.q[b * k..(b + 1) * k]);
+                    for j in 0..4 {
+                        out[(i + j) * batch + b] = epilogue(r + j, b, acc[j]);
                     }
-                    *ob = f16::from_f32(t);
+                }
+                i += 4;
+            }
+            for i in i..nrows {
+                let r = r0 + i;
+                for b in 0..batch {
+                    let acc = crate::mlp::dot_codes(self.avx2, row(r), &a.q[b * k..(b + 1) * k]);
+                    out[i * batch + b] = epilogue(r, b, acc);
                 }
             }
         };
