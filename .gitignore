@@ -8,3 +8,5 @@ results/*.tmp
 /fuzz/coverage
 /fuzz/Cargo.lock
 results/tune-cache.csv
+/hw/build
+/hw/vectors
