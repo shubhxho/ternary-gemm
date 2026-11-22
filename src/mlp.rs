@@ -568,6 +568,11 @@ pub struct CpuEngine {
     avx2: bool,
     #[cfg_attr(not(all(target_arch = "x86_64", feature = "avx512")), allow(dead_code))]
     vnni: bool,
+    /// 2-bit packed weights decoded in registers ([`crate::cpu_packed`]), when the CPU has
+    /// AVX-512 VNNI + VBMI; `None` falls back to the byte-code paths.
+    packed: Option<Vec<crate::cpu_packed::Packed2>>,
+    /// Row sums scratch for the packed path (`n` padded to 16).
+    acc: Vec<i32>,
 }
 
 impl CpuEngine {
@@ -587,20 +592,61 @@ impl CpuEngine {
             .iter()
             .map(|l| l.w.iter().map(|&v| (v + 1) as u8).collect())
             .collect();
+        let packed = crate::cpu_packed::available().then(|| {
+            model
+                .layers
+                .iter()
+                .map(|l| crate::cpu_packed::Packed2::from_ternary(&l.w, l.n, l.k))
+                .collect::<Vec<_>>()
+        });
+        let qlen = d.div_ceil(64) * 64;
+        let acc_len = d.div_ceil(crate::cpu_packed::ROWS) * crate::cpu_packed::ROWS;
         Ok(Self {
             model: model.clone(),
             codes,
             bufs: [vec![0.0; d], vec![0.0; d]],
-            q: vec![0; d],
+            q: vec![0; qlen],
             avx2,
             vnni,
+            packed,
+            acc: vec![0; acc_len],
         })
+    }
+
+    /// Force the byte-code SIMD path even when the packed AVX-512 path is available (used to
+    /// benchmark one against the other; results are identical).
+    pub fn without_packed(mut self) -> Self {
+        self.packed = None;
+        self
+    }
+
+    fn forward_packed(&mut self, x: &[f32], out: &mut [f32]) {
+        let packed = self.packed.as_ref().expect("packed path");
+        let [b0, b1] = &mut self.bufs;
+        let (mut cur, mut nxt) = (b0, b1);
+        cur[..x.len()].copy_from_slice(x);
+        let nl = self.model.layers.len();
+        for (li, l) in self.model.layers.iter().enumerate() {
+            let p = &packed[li];
+            let (s, sum_q) = quantize_into(&cur[..l.k], &mut self.q[..l.k]);
+            crate::cpu_packed::gemv(p, &self.q[..p.q_len()], &mut self.acc[..p.n_padded()]);
+            let dst: &mut [f32] = if li + 1 == nl {
+                &mut *out
+            } else {
+                &mut nxt[..l.n]
+            };
+            crate::cpu_packed::epilogue(&self.acc, sum_q, s, &l.scale, &l.bias, l.act, dst);
+            std::mem::swap(&mut cur, &mut nxt);
+        }
     }
 
     /// `x: [in_dim]` -> `out: [out_dim]`. No heap allocation.
     pub fn forward_into(&mut self, x: &[f32], out: &mut [f32]) {
         assert_eq!(x.len(), self.model.in_dim());
         assert_eq!(out.len(), self.model.out_dim());
+        if self.packed.is_some() {
+            return self.forward_packed(x, out);
+        }
         let [b0, b1] = &mut self.bufs;
         let (mut cur, mut nxt) = (b0, b1);
         cur[..x.len()].copy_from_slice(x);
@@ -660,7 +706,9 @@ impl CpuEngine {
 
     /// The SIMD path this engine dispatches to on this CPU.
     pub fn simd(&self) -> &'static str {
-        if self.vnni {
+        if self.packed.is_some() {
+            "avx512-vnni-vbmi packed2"
+        } else if self.vnni {
             "avx512-vnni"
         } else if self.avx2 {
             "avx2"
