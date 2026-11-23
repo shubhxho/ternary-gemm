@@ -75,9 +75,10 @@ pub fn scatter_c_s32(c: &mut [[i32; MMA_N]; MMA_M], lane: usize, d: [i32; 4]) {
     let group = lane >> 2;
     let tidg = lane & 3;
     let col0 = tidg * 2;
+    // PTX ISA m16n8k16 accumulator layout: d0,d1 on row `group`, d2,d3 on row `group+8`.
     c[group][col0] = d[0];
-    c[group + 8][col0] = d[1];
-    c[group][col0 + 1] = d[2];
+    c[group][col0 + 1] = d[1];
+    c[group + 8][col0] = d[2];
     c[group + 8][col0 + 1] = d[3];
 }
 
@@ -89,8 +90,8 @@ pub fn gather_c_s32(c: &[[i32; MMA_N]; MMA_M], lane: usize) -> [i32; 4] {
     let col0 = tidg * 2;
     [
         c[group][col0],
-        c[group + 8][col0],
         c[group][col0 + 1],
+        c[group + 8][col0],
         c[group + 8][col0 + 1],
     ]
 }
