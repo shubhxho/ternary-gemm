@@ -1,0 +1,206 @@
+# measured by src/bin/latency.rs (batch 1, end to end, microseconds)
+# cpu,AMD EPYC 9B45; 48 logical CPUs; pinned to 4
+# gpu,NVIDIA RTX PRO 6000 Blackwell Server Edition
+# lat,model,path,device,iters,p50,p90,p99,p999,max,mean,std
+# hist,model,path,lo_us,hi_us,count
+lat,tiny 64-256-256-1,CPU ternary scalar reference,CPU: AMD EPYC 9B45; 48 logical CPUs; pinned to 4,20000,53.1300,53.3800,65.9100,68.9700,90.4600,53.6902,2.2677
+hist,tiny 64-256-256-1,CPU ternary scalar reference,50.11872,56.23413,18433
+hist,tiny 64-256-256-1,CPU ternary scalar reference,56.23413,63.09573,1061
+hist,tiny 64-256-256-1,CPU ternary scalar reference,63.09573,70.79458,502
+hist,tiny 64-256-256-1,CPU ternary scalar reference,70.79458,79.43282,2
+hist,tiny 64-256-256-1,CPU ternary scalar reference,79.43282,89.12509,1
+hist,tiny 64-256-256-1,CPU ternary scalar reference,89.12509,100.00000,1
+lat,tiny 64-256-256-1,CPU ternary SIMD (CpuEngine),CPU: AMD EPYC 9B45; 48 logical CPUs; pinned to 4,20000,1.4100,1.4300,1.4400,5.6800,6.9500,1.4146,0.1754
+hist,tiny 64-256-256-1,CPU ternary SIMD (CpuEngine),1.25893,1.41254,13393
+hist,tiny 64-256-256-1,CPU ternary SIMD (CpuEngine),1.41254,1.58489,6568
+hist,tiny 64-256-256-1,CPU ternary SIMD (CpuEngine),1.58489,1.77828,5
+hist,tiny 64-256-256-1,CPU ternary SIMD (CpuEngine),1.77828,1.99526,3
+hist,tiny 64-256-256-1,CPU ternary SIMD (CpuEngine),3.16228,3.54813,1
+hist,tiny 64-256-256-1,CPU ternary SIMD (CpuEngine),5.01187,5.62341,6
+hist,tiny 64-256-256-1,CPU ternary SIMD (CpuEngine),5.62341,6.30957,22
+hist,tiny 64-256-256-1,CPU ternary SIMD (CpuEngine),6.30957,7.07946,2
+lat,tiny 64-256-256-1,CPU ternary SIMD x4 threads,CPU: AMD EPYC 9B45; 48 logical CPUs; pinned to 4,20000,1.3400,1.3600,1.3700,5.5800,10.4700,1.3438,0.1815
+hist,tiny 64-256-256-1,CPU ternary SIMD x4 threads,1.25893,1.41254,19969
+hist,tiny 64-256-256-1,CPU ternary SIMD x4 threads,1.41254,1.58489,2
+hist,tiny 64-256-256-1,CPU ternary SIMD x4 threads,1.58489,1.77828,1
+hist,tiny 64-256-256-1,CPU ternary SIMD x4 threads,5.01187,5.62341,10
+hist,tiny 64-256-256-1,CPU ternary SIMD x4 threads,5.62341,6.30957,14
+hist,tiny 64-256-256-1,CPU ternary SIMD x4 threads,6.30957,7.07946,1
+hist,tiny 64-256-256-1,CPU ternary SIMD x4 threads,7.07946,7.94328,1
+hist,tiny 64-256-256-1,CPU ternary SIMD x4 threads,7.94328,8.91251,1
+hist,tiny 64-256-256-1,CPU ternary SIMD x4 threads,10.00000,11.22018,1
+lat,tiny 64-256-256-1,CPU dense f32 SIMD,CPU: AMD EPYC 9B45; 48 logical CPUs; pinned to 4,20000,3.4300,3.4500,3.4700,7.9700,61.8600,3.4521,0.4899
+hist,tiny 64-256-256-1,CPU dense f32 SIMD,3.16228,3.54813,19910
+hist,tiny 64-256-256-1,CPU dense f32 SIMD,3.54813,3.98107,15
+hist,tiny 64-256-256-1,CPU dense f32 SIMD,3.98107,4.46684,1
+hist,tiny 64-256-256-1,CPU dense f32 SIMD,5.62341,6.30957,1
+hist,tiny 64-256-256-1,CPU dense f32 SIMD,6.30957,7.07946,3
+hist,tiny 64-256-256-1,CPU dense f32 SIMD,7.07946,7.94328,46
+hist,tiny 64-256-256-1,CPU dense f32 SIMD,7.94328,8.91251,22
+hist,tiny 64-256-256-1,CPU dense f32 SIMD,8.91251,10.00000,1
+hist,tiny 64-256-256-1,CPU dense f32 SIMD,56.23413,63.09573,1
+lat,tiny 64-256-256-1,GPU ternary graph + spin,GPU: NVIDIA RTX PRO 6000 Blackwell Server Edition,20000,20.4400,20.5000,20.8200,25.2100,33.5900,20.3426,0.6067
+hist,tiny 64-256-256-1,GPU ternary graph + spin,11.22018,12.58925,3
+hist,tiny 64-256-256-1,GPU ternary graph + spin,12.58925,14.12538,59
+hist,tiny 64-256-256-1,GPU ternary graph + spin,14.12538,15.84893,5
+hist,tiny 64-256-256-1,GPU ternary graph + spin,17.78279,19.95262,1949
+hist,tiny 64-256-256-1,GPU ternary graph + spin,19.95262,22.38721,17890
+hist,tiny 64-256-256-1,GPU ternary graph + spin,22.38721,25.11886,71
+hist,tiny 64-256-256-1,GPU ternary graph + spin,25.11886,28.18383,20
+hist,tiny 64-256-256-1,GPU ternary graph + spin,28.18383,31.62278,1
+hist,tiny 64-256-256-1,GPU ternary graph + spin,31.62278,35.48134,2
+lat,tiny 64-256-256-1,GPU ternary direct + spin,GPU: NVIDIA RTX PRO 6000 Blackwell Server Edition,20000,21.4600,21.5500,22.5300,26.6100,37.1400,21.3916,0.6663
+hist,tiny 64-256-256-1,GPU ternary direct + spin,12.58925,14.12538,2
+hist,tiny 64-256-256-1,GPU ternary direct + spin,14.12538,15.84893,73
+hist,tiny 64-256-256-1,GPU ternary direct + spin,15.84893,17.78279,1
+hist,tiny 64-256-256-1,GPU ternary direct + spin,17.78279,19.95262,1
+hist,tiny 64-256-256-1,GPU ternary direct + spin,19.95262,22.38721,19668
+hist,tiny 64-256-256-1,GPU ternary direct + spin,22.38721,25.11886,138
+hist,tiny 64-256-256-1,GPU ternary direct + spin,25.11886,28.18383,111
+hist,tiny 64-256-256-1,GPU ternary direct + spin,28.18383,31.62278,4
+hist,tiny 64-256-256-1,GPU ternary direct + spin,31.62278,35.48134,1
+hist,tiny 64-256-256-1,GPU ternary direct + spin,35.48134,39.81072,1
+lat,tiny 64-256-256-1,GPU ternary graph + blocking sync,GPU: NVIDIA RTX PRO 6000 Blackwell Server Edition,20000,20.4400,20.5000,20.8300,25.5600,37.1500,20.3501,0.6025
+hist,tiny 64-256-256-1,GPU ternary graph + blocking sync,11.22018,12.58925,5
+hist,tiny 64-256-256-1,GPU ternary graph + blocking sync,12.58925,14.12538,44
+hist,tiny 64-256-256-1,GPU ternary graph + blocking sync,14.12538,15.84893,3
+hist,tiny 64-256-256-1,GPU ternary graph + blocking sync,17.78279,19.95262,1943
+hist,tiny 64-256-256-1,GPU ternary graph + blocking sync,19.95262,22.38721,17907
+hist,tiny 64-256-256-1,GPU ternary graph + blocking sync,22.38721,25.11886,70
+hist,tiny 64-256-256-1,GPU ternary graph + blocking sync,25.11886,28.18383,22
+hist,tiny 64-256-256-1,GPU ternary graph + blocking sync,28.18383,31.62278,3
+hist,tiny 64-256-256-1,GPU ternary graph + blocking sync,31.62278,35.48134,1
+hist,tiny 64-256-256-1,GPU ternary graph + blocking sync,35.48134,39.81072,2
+lat,tiny 64-256-256-1,GPU ternary persistent (experimental),GPU: NVIDIA RTX PRO 6000 Blackwell Server Edition,20000,8.5500,8.6500,8.8200,11.2800,20.1700,8.5828,0.2197
+hist,tiny 64-256-256-1,GPU ternary persistent (experimental),7.07946,7.94328,11
+hist,tiny 64-256-256-1,GPU ternary persistent (experimental),7.94328,8.91251,19818
+hist,tiny 64-256-256-1,GPU ternary persistent (experimental),8.91251,10.00000,44
+hist,tiny 64-256-256-1,GPU ternary persistent (experimental),10.00000,11.22018,100
+hist,tiny 64-256-256-1,GPU ternary persistent (experimental),11.22018,12.58925,24
+hist,tiny 64-256-256-1,GPU ternary persistent (experimental),12.58925,14.12538,1
+hist,tiny 64-256-256-1,GPU ternary persistent (experimental),15.84893,17.78279,1
+hist,tiny 64-256-256-1,GPU ternary persistent (experimental),19.95262,22.38721,1
+lat,tiny 64-256-256-1,GPU cuBLAS FP16 graph + spin,GPU: NVIDIA RTX PRO 6000 Blackwell Server Edition,20000,22.4700,22.7700,24.5200,27.6100,41.7200,22.2414,1.0720
+hist,tiny 64-256-256-1,GPU cuBLAS FP16 graph + spin,17.78279,19.95262,1699
+hist,tiny 64-256-256-1,GPU cuBLAS FP16 graph + spin,19.95262,22.38721,7138
+hist,tiny 64-256-256-1,GPU cuBLAS FP16 graph + spin,22.38721,25.11886,10982
+hist,tiny 64-256-256-1,GPU cuBLAS FP16 graph + spin,25.11886,28.18383,174
+hist,tiny 64-256-256-1,GPU cuBLAS FP16 graph + spin,28.18383,31.62278,4
+hist,tiny 64-256-256-1,GPU cuBLAS FP16 graph + spin,31.62278,35.48134,1
+hist,tiny 64-256-256-1,GPU cuBLAS FP16 graph + spin,35.48134,39.81072,1
+hist,tiny 64-256-256-1,GPU cuBLAS FP16 graph + spin,39.81072,44.66836,1
+lat,small 256-1024-1024-16,CPU ternary scalar reference,CPU: AMD EPYC 9B45; 48 logical CPUs; pinned to 4,20000,786.8000,788.3000,877.2000,995.0500,1001.8600,788.2046,17.1976
+hist,small 256-1024-1024-16,CPU ternary scalar reference,707.94578,794.32823,19493
+hist,small 256-1024-1024-16,CPU ternary scalar reference,794.32823,891.25094,325
+hist,small 256-1024-1024-16,CPU ternary scalar reference,891.25094,1000.00000,180
+hist,small 256-1024-1024-16,CPU ternary scalar reference,1000.00000,1122.01845,2
+lat,small 256-1024-1024-16,CPU ternary SIMD (CpuEngine),CPU: AMD EPYC 9B45; 48 logical CPUs; pinned to 4,20000,14.2000,14.5300,19.8900,21.0800,26.6300,14.2669,0.7790
+hist,small 256-1024-1024-16,CPU ternary SIMD (CpuEngine),12.58925,14.12538,7959
+hist,small 256-1024-1024-16,CPU ternary SIMD (CpuEngine),14.12538,15.84893,11741
+hist,small 256-1024-1024-16,CPU ternary SIMD (CpuEngine),15.84893,17.78279,6
+hist,small 256-1024-1024-16,CPU ternary SIMD (CpuEngine),17.78279,19.95262,109
+hist,small 256-1024-1024-16,CPU ternary SIMD (CpuEngine),19.95262,22.38721,181
+hist,small 256-1024-1024-16,CPU ternary SIMD (CpuEngine),22.38721,25.11886,3
+hist,small 256-1024-1024-16,CPU ternary SIMD (CpuEngine),25.11886,28.18383,1
+lat,small 256-1024-1024-16,CPU ternary SIMD x4 threads,CPU: AMD EPYC 9B45; 48 logical CPUs; pinned to 4,20000,14.4000,14.7500,20.0400,21.2900,37.6400,14.4763,0.8024
+hist,small 256-1024-1024-16,CPU ternary SIMD x4 threads,12.58925,14.12538,3577
+hist,small 256-1024-1024-16,CPU ternary SIMD x4 threads,14.12538,15.84893,16105
+hist,small 256-1024-1024-16,CPU ternary SIMD x4 threads,15.84893,17.78279,4
+hist,small 256-1024-1024-16,CPU ternary SIMD x4 threads,17.78279,19.95262,93
+hist,small 256-1024-1024-16,CPU ternary SIMD x4 threads,19.95262,22.38721,219
+hist,small 256-1024-1024-16,CPU ternary SIMD x4 threads,22.38721,25.11886,1
+hist,small 256-1024-1024-16,CPU ternary SIMD x4 threads,35.48134,39.81072,1
+lat,small 256-1024-1024-16,CPU dense f32 SIMD,CPU: AMD EPYC 9B45; 48 logical CPUs; pinned to 4,20000,55.8900,56.2700,62.7200,71.3300,84.8400,56.2820,1.6363
+hist,small 256-1024-1024-16,CPU dense f32 SIMD,50.11872,56.23413,17772
+hist,small 256-1024-1024-16,CPU dense f32 SIMD,56.23413,63.09573,2106
+hist,small 256-1024-1024-16,CPU dense f32 SIMD,63.09573,70.79458,102
+hist,small 256-1024-1024-16,CPU dense f32 SIMD,70.79458,79.43282,16
+hist,small 256-1024-1024-16,CPU dense f32 SIMD,79.43282,89.12509,4
+lat,small 256-1024-1024-16,GPU ternary graph + spin,GPU: NVIDIA RTX PRO 6000 Blackwell Server Edition,20000,32.7300,32.8000,33.9100,39.6600,53.8900,32.6878,0.5923
+hist,small 256-1024-1024-16,GPU ternary graph + spin,28.18383,31.62278,210
+hist,small 256-1024-1024-16,GPU ternary graph + spin,31.62278,35.48134,19680
+hist,small 256-1024-1024-16,GPU ternary graph + spin,35.48134,39.81072,91
+hist,small 256-1024-1024-16,GPU ternary graph + spin,39.81072,44.66836,15
+hist,small 256-1024-1024-16,GPU ternary graph + spin,44.66836,50.11872,3
+hist,small 256-1024-1024-16,GPU ternary graph + spin,50.11872,56.23413,1
+lat,small 256-1024-1024-16,GPU ternary direct + spin,GPU: NVIDIA RTX PRO 6000 Blackwell Server Edition,20000,33.7500,33.8600,37.7700,39.9600,58.6700,33.7276,0.6961
+hist,small 256-1024-1024-16,GPU ternary direct + spin,25.11886,28.18383,1
+hist,small 256-1024-1024-16,GPU ternary direct + spin,28.18383,31.62278,36
+hist,small 256-1024-1024-16,GPU ternary direct + spin,31.62278,35.48134,19697
+hist,small 256-1024-1024-16,GPU ternary direct + spin,35.48134,39.81072,242
+hist,small 256-1024-1024-16,GPU ternary direct + spin,39.81072,44.66836,21
+hist,small 256-1024-1024-16,GPU ternary direct + spin,44.66836,50.11872,1
+hist,small 256-1024-1024-16,GPU ternary direct + spin,50.11872,56.23413,1
+hist,small 256-1024-1024-16,GPU ternary direct + spin,56.23413,63.09573,1
+lat,small 256-1024-1024-16,GPU ternary graph + blocking sync,GPU: NVIDIA RTX PRO 6000 Blackwell Server Edition,20000,32.7300,32.7900,33.7300,37.8100,97.4700,32.6678,0.6574
+hist,small 256-1024-1024-16,GPU ternary graph + blocking sync,25.11886,28.18383,8
+hist,small 256-1024-1024-16,GPU ternary graph + blocking sync,28.18383,31.62278,178
+hist,small 256-1024-1024-16,GPU ternary graph + blocking sync,31.62278,35.48134,19741
+hist,small 256-1024-1024-16,GPU ternary graph + blocking sync,35.48134,39.81072,66
+hist,small 256-1024-1024-16,GPU ternary graph + blocking sync,39.81072,44.66836,5
+hist,small 256-1024-1024-16,GPU ternary graph + blocking sync,44.66836,50.11872,1
+hist,small 256-1024-1024-16,GPU ternary graph + blocking sync,89.12509,100.00000,1
+lat,small 256-1024-1024-16,GPU ternary persistent (experimental),GPU: NVIDIA RTX PRO 6000 Blackwell Server Edition,20000,23.1300,23.3300,24.8500,27.7500,40.0800,23.1695,0.4144
+hist,small 256-1024-1024-16,GPU ternary persistent (experimental),19.95262,22.38721,4
+hist,small 256-1024-1024-16,GPU ternary persistent (experimental),22.38721,25.11886,19805
+hist,small 256-1024-1024-16,GPU ternary persistent (experimental),25.11886,28.18383,182
+hist,small 256-1024-1024-16,GPU ternary persistent (experimental),28.18383,31.62278,7
+hist,small 256-1024-1024-16,GPU ternary persistent (experimental),31.62278,35.48134,1
+hist,small 256-1024-1024-16,GPU ternary persistent (experimental),39.81072,44.66836,1
+lat,small 256-1024-1024-16,GPU cuBLAS FP16 graph + spin,GPU: NVIDIA RTX PRO 6000 Blackwell Server Edition,20000,20.5100,20.6200,21.3600,26.6800,39.9300,20.4044,0.6166
+hist,small 256-1024-1024-16,GPU cuBLAS FP16 graph + spin,15.84893,17.78279,1
+hist,small 256-1024-1024-16,GPU cuBLAS FP16 graph + spin,17.78279,19.95262,1988
+hist,small 256-1024-1024-16,GPU cuBLAS FP16 graph + spin,19.95262,22.38721,17853
+hist,small 256-1024-1024-16,GPU cuBLAS FP16 graph + spin,22.38721,25.11886,45
+hist,small 256-1024-1024-16,GPU cuBLAS FP16 graph + spin,25.11886,28.18383,107
+hist,small 256-1024-1024-16,GPU cuBLAS FP16 graph + spin,28.18383,31.62278,5
+hist,small 256-1024-1024-16,GPU cuBLAS FP16 graph + spin,39.81072,44.66836,1
+lat,medium 1024-1024-1024-1024-4,CPU ternary scalar reference,CPU: AMD EPYC 9B45; 48 logical CPUs; pinned to 4,20000,1844.5000,1848.7190,1930.9910,2222.2200,2734.2000,1847.2266,25.4715
+hist,medium 1024-1024-1024-1024-4,CPU ternary scalar reference,1778.27941,1995.26231,19847
+hist,medium 1024-1024-1024-1024-4,CPU ternary scalar reference,1995.26231,2238.72114,134
+hist,medium 1024-1024-1024-1024-4,CPU ternary scalar reference,2238.72114,2511.88643,18
+hist,medium 1024-1024-1024-1024-4,CPU ternary scalar reference,2511.88643,2818.38293,1
+lat,medium 1024-1024-1024-1024-4,CPU ternary SIMD (CpuEngine),CPU: AMD EPYC 9B45; 48 logical CPUs; pinned to 4,20000,37.9300,38.5500,43.5000,44.4000,119.4300,38.1980,1.2408
+hist,medium 1024-1024-1024-1024-4,CPU ternary SIMD (CpuEngine),35.48134,39.81072,19169
+hist,medium 1024-1024-1024-1024-4,CPU ternary SIMD (CpuEngine),39.81072,44.66836,819
+hist,medium 1024-1024-1024-1024-4,CPU ternary SIMD (CpuEngine),44.66836,50.11872,9
+hist,medium 1024-1024-1024-1024-4,CPU ternary SIMD (CpuEngine),50.11872,56.23413,1
+hist,medium 1024-1024-1024-1024-4,CPU ternary SIMD (CpuEngine),56.23413,63.09573,1
+hist,medium 1024-1024-1024-1024-4,CPU ternary SIMD (CpuEngine),112.20185,125.89254,1
+lat,medium 1024-1024-1024-1024-4,CPU ternary SIMD x4 threads,CPU: AMD EPYC 9B45; 48 logical CPUs; pinned to 4,20000,35.3200,36.2000,40.7800,41.8200,62.9700,35.6236,1.1190
+hist,medium 1024-1024-1024-1024-4,CPU ternary SIMD x4 threads,31.62278,35.48134,12374
+hist,medium 1024-1024-1024-1024-4,CPU ternary SIMD x4 threads,35.48134,39.81072,6957
+hist,medium 1024-1024-1024-1024-4,CPU ternary SIMD x4 threads,39.81072,44.66836,663
+hist,medium 1024-1024-1024-1024-4,CPU ternary SIMD x4 threads,44.66836,50.11872,3
+hist,medium 1024-1024-1024-1024-4,CPU ternary SIMD x4 threads,50.11872,56.23413,1
+hist,medium 1024-1024-1024-1024-4,CPU ternary SIMD x4 threads,56.23413,63.09573,2
+lat,medium 1024-1024-1024-1024-4,CPU dense f32 SIMD,CPU: AMD EPYC 9B45; 48 logical CPUs; pinned to 4,20000,133.3100,138.5700,140.2000,147.6100,162.2800,134.0724,2.1323
+hist,medium 1024-1024-1024-1024-4,CPU dense f32 SIMD,125.89254,141.25375,19919
+hist,medium 1024-1024-1024-1024-4,CPU dense f32 SIMD,141.25375,158.48932,79
+hist,medium 1024-1024-1024-1024-4,CPU dense f32 SIMD,158.48932,177.82794,2
+lat,medium 1024-1024-1024-1024-4,GPU ternary graph + spin,GPU: NVIDIA RTX PRO 6000 Blackwell Server Edition,20000,47.0600,47.1900,49.0800,51.9200,70.0300,46.9821,0.6146
+hist,medium 1024-1024-1024-1024-4,GPU ternary graph + spin,39.81072,44.66836,165
+hist,medium 1024-1024-1024-1024-4,GPU ternary graph + spin,44.66836,50.11872,19693
+hist,medium 1024-1024-1024-1024-4,GPU ternary graph + spin,50.11872,56.23413,141
+hist,medium 1024-1024-1024-1024-4,GPU ternary graph + spin,63.09573,70.79458,1
+lat,medium 1024-1024-1024-1024-4,GPU ternary direct + spin,GPU: NVIDIA RTX PRO 6000 Blackwell Server Edition,20000,48.0800,48.2700,49.3100,53.3100,90.1700,47.9763,0.7042
+hist,medium 1024-1024-1024-1024-4,GPU ternary direct + spin,44.66836,50.11872,19821
+hist,medium 1024-1024-1024-1024-4,GPU ternary direct + spin,50.11872,56.23413,176
+hist,medium 1024-1024-1024-1024-4,GPU ternary direct + spin,56.23413,63.09573,2
+hist,medium 1024-1024-1024-1024-4,GPU ternary direct + spin,89.12509,100.00000,1
+lat,medium 1024-1024-1024-1024-4,GPU ternary graph + blocking sync,GPU: NVIDIA RTX PRO 6000 Blackwell Server Edition,20000,47.0600,47.1700,49.2800,52.2100,68.5400,47.0216,0.6015
+hist,medium 1024-1024-1024-1024-4,GPU ternary graph + blocking sync,39.81072,44.66836,101
+hist,medium 1024-1024-1024-1024-4,GPU ternary graph + blocking sync,44.66836,50.11872,19744
+hist,medium 1024-1024-1024-1024-4,GPU ternary graph + blocking sync,50.11872,56.23413,154
+hist,medium 1024-1024-1024-1024-4,GPU ternary graph + blocking sync,63.09573,70.79458,1
+lat,medium 1024-1024-1024-1024-4,GPU ternary persistent (experimental),GPU: NVIDIA RTX PRO 6000 Blackwell Server Edition,20000,41.7400,42.0300,42.3000,45.2400,62.6700,41.7514,0.3360
+hist,medium 1024-1024-1024-1024-4,GPU ternary persistent (experimental),39.81072,44.66836,19963
+hist,medium 1024-1024-1024-1024-4,GPU ternary persistent (experimental),44.66836,50.11872,35
+hist,medium 1024-1024-1024-1024-4,GPU ternary persistent (experimental),50.11872,56.23413,1
+hist,medium 1024-1024-1024-1024-4,GPU ternary persistent (experimental),56.23413,63.09573,1
+lat,medium 1024-1024-1024-1024-4,GPU cuBLAS FP16 graph + spin,GPU: NVIDIA RTX PRO 6000 Blackwell Server Edition,20000,24.3600,24.5500,24.9100,29.0200,34.6200,23.6317,1.1113
+hist,medium 1024-1024-1024-1024-4,GPU cuBLAS FP16 graph + spin,19.95262,22.38721,1744
+hist,medium 1024-1024-1024-1024-4,GPU cuBLAS FP16 graph + spin,22.38721,25.11886,18093
+hist,medium 1024-1024-1024-1024-4,GPU cuBLAS FP16 graph + spin,25.11886,28.18383,110
+hist,medium 1024-1024-1024-1024-4,GPU cuBLAS FP16 graph + spin,28.18383,31.62278,49
+hist,medium 1024-1024-1024-1024-4,GPU cuBLAS FP16 graph + spin,31.62278,35.48134,4

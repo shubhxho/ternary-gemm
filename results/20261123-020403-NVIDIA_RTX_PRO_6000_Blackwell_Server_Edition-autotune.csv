@@ -1,0 +1,21 @@
+device,n,k,batch,warps,rows_per_warp,fused,best_us,default_us,tried,backend
+NVIDIA RTX PRO 6000 Blackwell Server Edition,640,2560,1,8,1,1,4.123,8.218,16,dp4a
+NVIDIA RTX PRO 6000 Blackwell Server Edition,640,2560,2,8,1,1,6.171,10.246,16,dp4a
+NVIDIA RTX PRO 6000 Blackwell Server Edition,640,2560,4,4,1,0,10.248,10.267,15,dp4a
+NVIDIA RTX PRO 6000 Blackwell Server Edition,640,2560,8,4,1,0,12.308,12.308,14,dp4a
+NVIDIA RTX PRO 6000 Blackwell Server Edition,640,2560,16,4,1,0,16.390,16.391,13,dp4a
+NVIDIA RTX PRO 6000 Blackwell Server Edition,2560,2560,1,4,4,1,6.171,8.195,16,dp4a
+NVIDIA RTX PRO 6000 Blackwell Server Edition,2560,2560,2,8,2,1,8.217,10.246,16,dp4a
+NVIDIA RTX PRO 6000 Blackwell Server Edition,2560,2560,4,8,2,1,10.287,12.308,15,dp4a
+NVIDIA RTX PRO 6000 Blackwell Server Edition,2560,2560,8,4,1,0,14.344,14.356,15,dp4a
+NVIDIA RTX PRO 6000 Blackwell Server Edition,2560,2560,16,4,1,0,18.438,18.438,14,dp4a
+NVIDIA RTX PRO 6000 Blackwell Server Edition,2560,6912,1,8,2,1,8.216,10.268,16,dp4a
+NVIDIA RTX PRO 6000 Blackwell Server Edition,2560,6912,2,8,2,1,10.883,12.315,15,dp4a
+NVIDIA RTX PRO 6000 Blackwell Server Edition,2560,6912,4,2,4,0,14.362,16.409,15,dp4a
+NVIDIA RTX PRO 6000 Blackwell Server Edition,2560,6912,8,4,1,0,19.046,20.484,14,dp4a
+NVIDIA RTX PRO 6000 Blackwell Server Edition,2560,6912,16,8,1,0,26.630,28.678,14,dp4a
+NVIDIA RTX PRO 6000 Blackwell Server Edition,6912,2560,1,8,2,1,6.170,8.219,16,dp4a
+NVIDIA RTX PRO 6000 Blackwell Server Edition,6912,2560,2,8,2,1,8.198,10.250,15,dp4a
+NVIDIA RTX PRO 6000 Blackwell Server Edition,6912,2560,4,4,1,0,12.296,14.342,15,dp4a
+NVIDIA RTX PRO 6000 Blackwell Server Edition,6912,2560,8,4,1,0,16.393,18.438,14,dp4a
+NVIDIA RTX PRO 6000 Blackwell Server Edition,6912,2560,16,4,1,0,26.631,28.673,14,dp4a
