@@ -1,4 +1,4 @@
-//! Time the extra batch-1 kernels (cp.async, split-K, LUT, warp-specialized, hand-written PTX)
+//! Time the extra kernels (cp.async, split-K, LUT, warp-specialized, bulk, batched, hand-written PTX)
 //! against the default dp4a kernel on a real GPU, after checking each one bit for bit against
 //! the CPU reference. Prints a Markdown table of measured microseconds and effective GB/s.
 //! Needs a CUDA device (sm_80+ for the ext kernels); `scripts/bench.sh --ext` runs it.
@@ -63,6 +63,7 @@ fn main() {
                 ExtKernel::SplitK { splits: 0 },
                 ExtKernel::Lut,
                 ExtKernel::WarpSpecialized,
+                ExtKernel::Bulk,
             ] {
                 cells.push(Some(Some(kind)));
             }
@@ -100,6 +101,83 @@ fn main() {
             g.synchronize().unwrap();
             let us = t.elapsed().as_secs_f64() * 1e6 / iters as f64;
             println!("| {n} x {k} | {name} | {us:.2} | {:.0} |", bytes / us / 1e3);
+        }
+    }
+
+    // Batched path: same shapes, batch 8 and 16. Effective GB/s still counts weight bytes once
+    // (the kernel's point is to amortize them). Numbers are only meaningful on a real GPU.
+    if g.info.compute_capability >= (8, 0) {
+        println!("\n| N x K x B | kernel | us / GEMM | effective GB/s (2-bit weights, counted once) |\n|---|---|---|---|");
+        for &(n, k) in &[(2560, 2560), (2560, 6912), (1024, 16384)] {
+            for &batch in &[8usize, 16] {
+                let w: Vec<i8> = (0..n * k).map(|_| rng.random_range(-1i8..=1)).collect();
+                let sc: Vec<f32> = (0..n).map(|_| rng.random_range(0.01f32..0.1)).collect();
+                let p = PackedTernary::from_ternary(&w, n, k, sc).unwrap();
+                let x: Vec<f16> = (0..batch * k)
+                    .map(|_| f16::from_f32(rng.random_range(-2.0..2.0)))
+                    .collect();
+                let a = quantize_acts(&x, batch, k, None, 1e-5);
+                let want: Vec<u16> =
+                    ternary_gemm::cuda_ext::reference_gemm(&p, &a, None, Act::Identity)
+                        .iter()
+                        .map(|v| v.to_bits())
+                        .collect();
+                let gw = g.upload_weights(&p).unwrap();
+                let mut ga = g.alloc_acts(batch, k).unwrap();
+                g.quantize(&g.upload_f16(&x).unwrap(), None, 1e-5, &mut ga)
+                    .unwrap();
+                let mut out = g.alloc_f16(batch * n).unwrap();
+                g.gemv_ext(
+                    ExtKernel::Batched,
+                    &gw,
+                    &ga,
+                    None,
+                    &mut out,
+                    Act::Identity,
+                    None,
+                )
+                .unwrap();
+                let got: Vec<u16> = g
+                    .download(&out)
+                    .unwrap()
+                    .iter()
+                    .map(|v| v.to_bits())
+                    .collect();
+                assert_eq!(got, want, "batched {n}x{k} batch {batch}: not bit-exact");
+                for _ in 0..10 {
+                    g.gemv_ext(
+                        ExtKernel::Batched,
+                        &gw,
+                        &ga,
+                        None,
+                        &mut out,
+                        Act::Identity,
+                        None,
+                    )
+                    .unwrap();
+                }
+                g.synchronize().unwrap();
+                let t0 = Instant::now();
+                for _ in 0..iters {
+                    g.gemv_ext(
+                        ExtKernel::Batched,
+                        &gw,
+                        &ga,
+                        None,
+                        &mut out,
+                        Act::Identity,
+                        None,
+                    )
+                    .unwrap();
+                }
+                g.synchronize().unwrap();
+                let us = t0.elapsed().as_secs_f64() * 1e6 / iters as f64;
+                let bytes = (n * k / 4) as f64;
+                println!(
+                    "| {n} x {k} x {batch} | batched | {us:.2} | {:.0} |",
+                    bytes / us / 1e3
+                );
+            }
         }
     }
 }

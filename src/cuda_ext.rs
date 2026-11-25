@@ -1,9 +1,11 @@
-//! CPU side of the extra batch-1 GEMV kernels in
+//! CPU side of the extra GEMV kernels in
 //! [`kernels/ternary_ext.cu`](../../kernels/ternary_ext.cu): their exact arithmetic contract
-//! ([`reference_gemv`], with a fused activation), bit-level emulations of the two kernels whose
-//! data flow differs from the main dp4a kernel ([`emulate_lut`], [`emulate_splitk`]), a model of
-//! the warp-specialized kernel's barrier protocol ([`simulate_warpspec`]), and the launch
-//! heuristics the GPU wrapper uses ([`splitk_factor`], shared-memory sizes).
+//! ([`reference_gemv`], [`reference_gemm`], with a fused activation), bit-level emulations of the
+//! kernels whose data flow differs from the main dp4a kernel ([`emulate_lut`], [`emulate_splitk`],
+//! [`emulate_batched`]), a model of the warp-specialized kernel's barrier protocol
+//! ([`simulate_warpspec`]), and the launch heuristics the GPU wrapper uses ([`splitk_factor`],
+//! [`pick_ext_kernel`], shared-memory sizes). The bulk kernel has the same math as cp.async r2
+//! (only the prefetch instruction changes), so it is covered by [`reference_gemv`].
 //!
 //! No GPU is needed for anything here, so the tests run everywhere; the CUDA kernels themselves
 //! are compile-checked with NVRTC/ptxas in CI and only run on a real device (`tests/gpu_ext.rs`).
@@ -32,6 +34,8 @@ pub const EXT_KERNELS: &[&str] = &[
     "tgx_splitk_finalize",
     "tgx_gemv_lut",
     "tgx_gemv_warpspec",
+    "tgx_gemv_batched",
+    "tgx_gemv_bulk_r2",
 ];
 
 /// Words per permuted chunk (`TGX_CHUNK_WORDS`, same as the main kernels).
@@ -48,6 +52,14 @@ pub const LUT_KT: usize = 2048;
 pub const WS_ROWS: usize = 8;
 /// Threads per block of the warp-specialized kernel (1 producer + 4 consumer warps).
 pub const WS_THREADS: usize = 160;
+/// Warps per block of the batched kernel (`TGX_BAT_WARPS`).
+pub const BAT_WARPS: usize = 4;
+/// Rows per warp of the batched kernel (`TGX_BAT_R`).
+pub const BAT_R: usize = 2;
+/// Ring depth of the batched kernel (`TGX_BAT_STAGES`).
+pub const BAT_STAGES: usize = 2;
+/// Largest batch `tgx_gemv_batched` accepts (`TGX_BAT_MAX`).
+pub const BAT_MAX: usize = 16;
 
 /// The kernels' epilogue for one output: `act((acc - sum) / s * scale) (+ residual)` as fp16.
 #[inline]
@@ -105,6 +117,33 @@ pub fn reference_gemv(
             )
         })
         .collect()
+}
+
+/// Batched W2A8 GEMM reference: `y[b*n + r] = epilogue(sum_k w[r][k] * q[b][k])`.
+/// Batch-1 equals [`reference_gemv`] bit for bit. Residual, if any, is laid out `[batch][n]`.
+pub fn reference_gemm(
+    w: &PackedTernary,
+    a: &QuantizedActs,
+    residual: Option<&[f16]>,
+    act: Act,
+) -> Vec<f16> {
+    assert_eq!(a.k, w.k, "activations matching K");
+    let mut out = vec![f16::from_f32(0.0); a.batch * w.n];
+    for b in 0..a.batch {
+        let q = &a.q[b * a.k..(b + 1) * a.k];
+        for r in 0..w.n {
+            let acc: i32 = (0..w.k).map(|c| w.get(r, c) as i32 * q[c] as i32).sum();
+            out[b * w.n + r] = epilogue(
+                acc + a.sum[b],
+                a.sum[b],
+                a.s[b],
+                w.row_scale[r],
+                act,
+                residual.map(|v| v[b * w.n + r]),
+            );
+        }
+    }
+    out
 }
 
 /// dp4a over one permuted chunk for one row, exactly as `tgx_chunk_dot` walks it.
@@ -319,6 +358,60 @@ pub fn warpspec_smem_bytes(k: usize) -> usize {
     k + 2 * WS_ROWS * 512
 }
 
+/// Dynamic shared memory of `tgx_gemv_batched` for a given batch (K-chunk of acts is 2048 B).
+pub fn batched_smem_bytes(batch: usize) -> usize {
+    batch * (CHUNK_WORDS * 16) + BAT_WARPS * BAT_STAGES * BAT_R * 512
+}
+
+/// Dynamic shared memory of `tgx_gemv_bulk_r2` (same footprint as cp.async r2).
+pub fn bulk_smem_bytes(k: usize) -> usize {
+    cpasync_smem_bytes(k, 2)
+}
+
+/// Emulates `tgx_gemv_batched`: walk K in 128-word chunks, reuse each chunk of weights across
+/// the batch, then the same epilogue. Int32 adds commute, so this is bit-identical to
+/// [`reference_gemm`] for any chunking.
+pub fn emulate_batched(
+    w: &PackedTernary,
+    a: &QuantizedActs,
+    residual: Option<&[f16]>,
+    act: Act,
+) -> Vec<f16> {
+    assert_eq!(a.k, w.k);
+    assert!(
+        (1..=BAT_MAX).contains(&a.batch),
+        "batched kernel supports batch 1..={BAT_MAX}"
+    );
+    let kw = w.k / 16;
+    let chunks = kw.div_ceil(CHUNK_WORDS);
+    let mut acc = vec![0i32; a.batch * w.n];
+    for c in 0..chunks {
+        let base = c * CHUNK_WORDS;
+        let l = CHUNK_WORDS.min(kw - base) / 4;
+        for r in 0..w.n {
+            let words = &w.permuted[r * kw..(r + 1) * kw];
+            // chunk_dot indexes q at 16*(base + ...). For the kernel, smem holds only this
+            // chunk (base' = 0); use the full-q path here, which is the same integers.
+            for b in 0..a.batch {
+                acc[b * w.n + r] += chunk_dot(words, &a.q[b * a.k..(b + 1) * a.k], base, l);
+            }
+        }
+    }
+    (0..a.batch * w.n)
+        .map(|i| {
+            let (b, r) = (i / w.n, i % w.n);
+            epilogue(
+                acc[i],
+                a.sum[b],
+                a.s[b],
+                w.row_scale[r],
+                act,
+                residual.map(|v| v[i]),
+            )
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -410,5 +503,56 @@ mod tests {
             assert!(cpasync_smem_bytes(8192, r) <= 48 * 1024, "r{r}");
         }
         assert!(warpspec_smem_bytes(8192) <= 48 * 1024);
+        for b in 1..=BAT_MAX {
+            assert!(batched_smem_bytes(b) <= 48 * 1024, "batch {b}");
+        }
+        assert!(bulk_smem_bytes(8192) <= 48 * 1024);
+    }
+
+    #[test]
+    fn reference_gemm_batch1_matches_gemv() {
+        let (p, a, res) = case(17, 2112, 9);
+        for act in [Act::Identity, Act::Relu, Act::Relu2] {
+            for r in [None, Some(&res[..])] {
+                assert_eq!(
+                    bits(&reference_gemv(&p, &a, r, act)),
+                    bits(&reference_gemm(&p, &a, r, act))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn batched_emulation_is_bit_exact() {
+        use crate::reference::quantize_acts;
+        let mut rng = StdRng::seed_from_u64(42);
+        for &(n, k, batch) in &[
+            (3usize, 64usize, 1usize),
+            (9, 2048, 4),
+            (33, 2112, 8),
+            (16, 4160, 16),
+            (5, 6144, 3),
+        ] {
+            let w: Vec<i8> = (0..n * k).map(|_| rng.random_range(-1i8..=1)).collect();
+            let sc: Vec<f32> = (0..n).map(|_| rng.random_range(0.01f32..0.1)).collect();
+            let p = PackedTernary::from_ternary(&w, n, k, sc).unwrap();
+            let x: Vec<f16> = (0..batch * k)
+                .map(|_| f16::from_f32(rng.random_range(-2.0..2.0)))
+                .collect();
+            let res: Vec<f16> = (0..batch * n)
+                .map(|_| f16::from_f32(rng.random_range(-1.0..1.0)))
+                .collect();
+            let a = quantize_acts(&x, batch, k, None, 1e-5);
+            for act in [Act::Identity, Act::Relu, Act::Relu2] {
+                for r in [None, Some(&res[..])] {
+                    let want = bits(&reference_gemm(&p, &a, r, act));
+                    assert_eq!(
+                        want,
+                        bits(&emulate_batched(&p, &a, r, act)),
+                        "{n}x{k} batch {batch} {act:?}"
+                    );
+                }
+            }
+        }
     }
 }

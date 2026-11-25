@@ -20,7 +20,7 @@ Fused **ternary matmul kernels for LLM decode on NVIDIA GPUs**, written in Rust 
 | area | what | docs |
 |---|---|---|
 | CPU backend | `cpu::CpuTernary`: bit-exact W2A8 GEMM for any batch, SIMD (AVX2 / AVX-512 VNNI), threaded; fast bit-exact activation quantizer. `Packed2` layout (`vpmultishiftqb` decode + `vpdpbusd`, AVX-512 VBMI) and a spin-wait thread pool: **2–4× lower measured p50** than the previous engine | [ARCHITECTURE](docs/ARCHITECTURE.md), [CPU_PERF](docs/CPU_PERF.md) |
-| Extra CUDA kernels | `cp.async` 4-stage pipeline, split-K, T-MAC-style LUT, warp-specialized producer/consumer, hand-written PTX; all with a fused dequant + ReLU/ReLU² + residual epilogue. **Compile-checked only** (NVRTC 12.8 and nvcc 13.5, sm_80..sm_120, 0 spills) | [CUDA_EXT](docs/CUDA_EXT.md) |
+| Extra CUDA kernels | `cp.async` 4-stage pipeline, split-K, T-MAC-style LUT, warp-specialized producer/consumer, hand-written PTX, **batched W2A8 GEMV (batch 1..16)** and **`cp.async.bulk` / TMA-style prefetch** (sm_90+ / sm_120, 16B fallback on sm_80). All with a fused dequant + ReLU/ReLU² + residual epilogue. **Compile-checked / CPU-emulated only on the authoring machine** (no NVIDIA GPU there; no timings claimed). Run `scripts/gpu_bench.sh` on a CUDA box. | [CUDA_EXT](docs/CUDA_EXT.md) |
 | Other languages | Bit-exact ports in Zig, Triton, Mojo, Julia, Futhark and Halide, plus hand PTX, checked against Rust-generated vectors with `make langs` | [LANGUAGES](docs/LANGUAGES.md) |
 | Looped transformer | `looped`: one weight-shared ternary block applied N times, input injection (none / add / adapter), adaptive halting, CPU + GPU backends | [LOOPED](docs/LOOPED.md) |
 | Tensor-core path | sm_80+ `mma.sync` backend: unpack 2-bit weights into int8/fp16 fragments (TriRun / BitBLAS style), selectable in the dispatcher and autotuner. 8× vs fp16 at batch 1 is a theoretical ceiling, not a measured GPU number | [TENSOR_CORES](docs/TENSOR_CORES.md), [report](docs/reports/tensor-core-ternary.md) |
@@ -76,7 +76,8 @@ A selectable backend unpacks the 2-bit natural-layout weights into int8 or fp16 
 git clone https://github.com/shubhxho/ternary-gemm && cd ternary-gemm
 ./scripts/bench.sh            # build -> GPU tests -> GEMM benchmarks + signal-model latency -> results/*.{md,csv,png}
 ./scripts/bench.sh --quick    # batches 1 and 16 only
-./scripts/bench.sh --ext      # also verify + time the extra CUDA kernels (cp.async, split-K, LUT, warp-spec, hand PTX)
+./scripts/gpu_bench.sh        # CPU emulations always; device tests + timings if a GPU is visible
+./scripts/bench.sh --ext      # also verify + time the extra CUDA kernels (cp.async, split-K, LUT, warp-spec, bulk, batched, hand PTX)
 ./scripts/bench.sh --cpu-threads 4   # add a 4-thread CPU engine row (pinned to 4 cores)
 ./scripts/bench.sh --byte-codes      # add the previous byte-code CPU engine for comparison
 ./scripts/latency_cpu.sh      # signal-model latency on the CPU only (no GPU needed)
