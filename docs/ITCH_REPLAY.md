@@ -44,9 +44,11 @@ large-cap names; not a representative universe.
   Standardized with train-period mean/std, clipped to ±5.
 * **Model**: `[64, 256, 256, 1]` ReLU MLP, the same shape as the repo's `tiny` signal model that
   PR #10 benchmarked, so the latency numbers line up.
-  * dense f32: Adam, binary cross-entropy (2M-sample random subsample of the training period).
-  * ternary QAT: initialized from dense, 3 more epochs with ternary weights (absmean per row) and
-    int8 per-sample activations in the forward pass, straight-through backward.
+  * dense f32: Adam / AdamW, binary cross-entropy. The original recipe (below) used a 2M-sample
+    random subsample of the training period; the improved recipe uses every labelled train sample.
+  * ternary QAT: initialized from dense, then fine-tuned with ternary weights (absmean per row) and
+    int8 per-sample activations in the forward pass, straight-through backward. The improved recipe
+    also distills the frozen dense teacher's logits.
   * ternary PTQ: the dense weights ternarized after training, no fine-tuning.
 * **Split (chronological, 5-minute embargo gaps)**: train 09:30–12:30, validation 12:35–13:30
   (model selection by AUC), test 13:35–16:00. A sample is only kept if the move that labels it
@@ -79,6 +81,70 @@ How to read it:
   imbalance rule). QAT is required.
 * Both learned models beat the best non-ML baseline (L1 queue imbalance) by about 0.04 AUC.
 * This is a prediction-quality test, not a strategy: no costs, queue position, fills or P&L.
+
+
+## Improved training recipe (same split, features, and architecture)
+
+Same official protocol as the table above (train 09:30–12:30, val 12:35–13:30, test 13:35–16:00,
+5-minute embargo, no label leakage, model selection by validation AUC only, Rust `itch replay
+--preds-out` scores). Same 64-dim features and `[64, 256, 256, 1]` ReLU MLP. What changed is only
+the training recipe in `scripts/itch_train.py --recipe improved` (default):
+
+* every labelled training sample (3,612,183), not a 2M subsample
+* AdamW (decoupled weight decay 1e-4) and a cosine learning-rate decay
+* QAT fine-tuning with logit-MSE distillation from the frozen dense teacher (mix 0.5), 6 epochs,
+  early stopping on val AUC
+
+`--recipe legacy` reproduces the original hyperparameters. Unit tests for AUC, the no-leakage
+split, absmean ternarization, distillation and the official windows: `python3 scripts/test_itch_train.py`.
+
+Official test numbers from this recipe, scored by the Rust engines on the same slice
+(`results/itch-20261125-distill/`):
+
+| model | AUC (next mid move) | accuracy | IC Spearman (1 s) | IC Pearson (1 s) | sign agreement with dense |
+|---|---|---|---|---|---|
+| dense f32 | 0.7064 | 0.6419 | 0.2922 | 0.1959 | 1.0000 |
+| ternary QAT | 0.7124 | 0.6464 | 0.3027 | 0.2083 | 0.9231 |
+| ternary PTQ | 0.6883 | 0.5782 | 0.2623 | 0.1660 | 0.6074 |
+| baseline: L1 queue imbalance | 0.6721 | 0.6249 | 0.2401 | 0.1426 | – |
+| baseline: microprice − mid | 0.6643 | 0.6251 | 0.2302 | 0.1050 | – |
+| baseline: 5-level depth imbalance | 0.5607 | 0.5488 | 0.0835 | 0.0456 | – |
+
+Compared with the original official table (same test period, same features):
+
+* **Next-mid AUC did not improve.** QAT 0.7124 vs 0.7137, dense 0.7064 vs 0.7094. That is a
+  small move against the previous run, not a win, and is well within what one day of data can
+  wobble. Do not quote this recipe as a higher official AUC.
+* **PTQ did improve:** 0.6763 → 0.6883 AUC, 0.2506 → 0.2623 Spearman IC. The dense teacher is
+  still ahead, so QAT remains the right inference model, but the untuned ternary is less of a
+  cliff.
+* **QAT tracks dense more closely** (sign agreement 0.8671 → 0.9231), which is what distillation
+  is for, and the 1 s IC is slightly higher (Spearman 0.3011 → 0.3027, Pearson 0.2045 → 0.2083).
+* The L1 imbalance baseline is 0.6721 in both runs, which is a check that the split and labels
+  did not change.
+* Filling the reserved `f[31]` slot with a mid-horizon OFI EWMA was tried and **not adopted**:
+  it did not beat this recipe's validation AUC, so the feature extractor is unchanged.
+
+Walk-forward expanding windows on the same day (5-minute embargoes, each fold retrained from
+scratch, never used to pick the official model). Train always starts at 09:30 ET. These folds
+share an expanding prefix so they are not independent; they mainly show time-of-day variation,
+not a four-day standard error.
+
+| fold | train end | test window | n_test | dense AUC | QAT AUC | PTQ AUC | L1 imbalance |
+|---|---|---|---|---|---|---|---|
+| fold1_am | 11:00 | 11:35–12:30 | 754,781 | 0.7148 | 0.7173 | 0.6588 | 0.6852 |
+| fold2_mid | 12:00 | 12:35–13:30 | 569,890 | 0.6903 | 0.6940 | 0.6749 | 0.6670 |
+| fold3_early_pm | 13:00 | 13:35–14:30 | 931,398 | 0.7104 | 0.7138 | 0.6736 | 0.6613 |
+| fold4_late_pm | 14:00 | 14:35–16:00 | 1,640,244 | 0.7190 | 0.7243 | 0.6641 | 0.6779 |
+| mean ± std |  |  |  | 0.7086 ± 0.0127 | 0.7124 ± 0.0130 | 0.6679 ± 0.0077 | 0.6728 ± 0.0107 |
+
+QAT is above dense in every fold. The walk-forward QAT mean (0.7124) matches the official
+afternoon test (0.7124). The previous official QAT number (0.7137) sits inside this spread.
+The midday fold is the weakest for every learned model, including dense. Raw table:
+`results/itch-20261125-distill/walkforward.md`.
+
+Latency is a property of the architecture and the CPU kernel, not of these weights. This recipe
+does not claim a new end-to-end latency number; use the hot-path table below.
 
 ## Hot-path round (Nov 25): ternary end to end 1.46 → 0.90 µs p50
 
