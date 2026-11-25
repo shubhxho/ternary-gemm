@@ -3,7 +3,7 @@
 //! test in `tests/gpu.rs` is skipped when no CUDA device is present.
 
 use half::f16;
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{rngs::StdRng, RngExt, SeedableRng};
 use ternary_gemm::pack::PackedTernary;
 use ternary_gemm::reference::{self, quantize_acts};
 use ternary_gemm::tensor_core;

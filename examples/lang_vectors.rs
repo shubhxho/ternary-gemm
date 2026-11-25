@@ -16,7 +16,7 @@
 //! ```
 
 use half::f16;
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{rngs::StdRng, RngExt, SeedableRng};
 use std::fmt::Write as _;
 use ternary_gemm::pack::PackedTernary;
 use ternary_gemm::reference::{gemm_i8, quantize_acts};

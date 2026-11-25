@@ -4,7 +4,7 @@
 //!
 //! Usage: `cargo run --release --example hw_vectors -- [out_dir] [rows] [k]` (defaults: hw/vectors 256 128)
 
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{rngs::StdRng, RngExt, SeedableRng};
 use std::fmt::Write as _;
 use ternary_gemm::PackedTernary;
 

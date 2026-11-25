@@ -27,7 +27,7 @@ use crate::cpu::CpuTernary;
 use crate::pack::{quantize_absmean, PackedTernary, K_ALIGN};
 use crate::reference::QuantizedActs;
 use half::f16;
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{rngs::StdRng, RngExt, SeedableRng};
 
 /// RMSNorm epsilon used by both norms in the block.
 pub const RMS_EPS: f32 = 1e-5;

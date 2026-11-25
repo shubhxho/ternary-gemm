@@ -2,7 +2,7 @@
 //! Numbers depend entirely on the machine; nothing here is a GPU measurement.
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{rngs::StdRng, RngExt, SeedableRng};
 use std::hint::black_box;
 use ternary_gemm::mlp::{quantize_into, Act, CpuEngine, DenseF32Mlp, TernaryMlp};
 use ternary_gemm::pack::PackedTernary;

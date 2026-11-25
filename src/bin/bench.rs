@@ -9,7 +9,7 @@
 
 use cudarc::driver::CudaSlice;
 use half::f16;
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{rngs::StdRng, RngExt, SeedableRng};
 use std::time::Instant;
 use ternary_gemm::gpu::{time_us, Cublas, Gpu, GpuTernary, Launch, Result, ROWS_PER_WARP};
 use ternary_gemm::pack::PackedTernary;

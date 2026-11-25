@@ -5,7 +5,7 @@
 //! without a GPU. It does not prove the CUDA code compiles to the same thing; the GPU tests do that.
 
 use half::f16;
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{rngs::StdRng, RngExt, SeedableRng};
 use ternary_gemm::pack::{PackedTernary, CHUNK_WORDS};
 use ternary_gemm::reference::{gemm_i8, quantize_acts};
 

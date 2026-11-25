@@ -35,7 +35,7 @@ cudarc = { version = "0.19", optional = true, default-features = false, features
 half = "2"
 safetensors = { version = "0.8", optional = true }
 libloading = { version = "0.9", optional = true }
-rand = "0.9"
+rand = "0.10"
 
 [dev-dependencies]
 proptest = "1"

@@ -3,7 +3,7 @@
 //! missing GPU is a failure.
 
 use half::f16;
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{rngs::StdRng, RngExt, SeedableRng};
 use ternary_gemm::gpu::{Gpu, Launch, ROWS_PER_WARP};
 use ternary_gemm::pack::PackedTernary;
 use ternary_gemm::reference::{self, quantize_acts};
