@@ -1,4 +1,4 @@
-//! The extra batch-1 kernels (cp.async, split-K, LUT, warp-specialized) on a real GPU, checked
+//! The extra kernels (cp.async, split-K, LUT, warp-specialized, batched, bulk) on a real GPU, checked
 //! bit for bit against `cuda_ext::reference_gemv`. Skipped without a CUDA device (or on pre-sm_80
 //! parts) unless `TERNARY_REQUIRE_GPU=1`.
 
@@ -42,6 +42,7 @@ fn ext_kernels_bit_exact_vs_reference() {
         ExtKernel::SplitK { splits: 3 },
         ExtKernel::Lut,
         ExtKernel::WarpSpecialized,
+        ExtKernel::Bulk,
     ];
     for &(n, k) in &[
         (1usize, 64usize),
@@ -110,6 +111,47 @@ fn hand_written_ptx_bit_exact_vs_reference() {
             want.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
             got.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
             "hand PTX {n}x{k}"
+        );
+    }
+}
+
+#[test]
+fn batched_kernel_bit_exact_vs_reference() {
+    let Some(g) = gpu() else { return };
+    let mut rng = StdRng::seed_from_u64(91);
+    for &(n, k, batch) in &[(8usize, 64usize, 1usize), (37, 2112, 4), (128, 2048, 16)] {
+        let w: Vec<i8> = (0..n * k).map(|_| rng.random_range(-1i8..=1)).collect();
+        let sc: Vec<f32> = (0..n).map(|_| rng.random_range(0.01f32..0.1)).collect();
+        let p = PackedTernary::from_ternary(&w, n, k, sc).unwrap();
+        let x: Vec<f16> = (0..batch * k)
+            .map(|_| f16::from_f32(rng.random_range(-2.0..2.0)))
+            .collect();
+        let res: Vec<f16> = (0..batch * n)
+            .map(|_| f16::from_f32(rng.random_range(-1.0..1.0)))
+            .collect();
+        let a = quantize_acts(&x, batch, k, None, 1e-5);
+        let want = ternary_gemm::cuda_ext::reference_gemm(&p, &a, Some(&res[..]), Act::Relu);
+        let gw = g.upload_weights(&p).unwrap();
+        let gx = g.upload_f16(&x).unwrap();
+        let gres = g.upload_f16(&res).unwrap();
+        let mut ga = g.alloc_acts(batch, k).unwrap();
+        g.quantize(&gx, None, 1e-5, &mut ga).unwrap();
+        let mut out = g.alloc_f16(batch * n).unwrap();
+        g.gemv_ext(
+            ExtKernel::Batched,
+            &gw,
+            &ga,
+            Some(&gres),
+            &mut out,
+            Act::Relu,
+            None,
+        )
+        .unwrap();
+        let got: Vec<f16> = g.download(&out).unwrap();
+        assert_eq!(
+            want.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+            got.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+            "batched {n}x{k} batch {batch}"
         );
     }
 }

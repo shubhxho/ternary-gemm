@@ -111,8 +111,8 @@ pub fn compile(arch: &str) -> Result<Ptx> {
     compile_src(KERNEL_SOURCE, arch, "ternary.cu")
 }
 
-/// Compile the extra batch-1 GEMV kernels ([`crate::cuda_ext`]: cp.async pipeline, split-K, LUT,
-/// warp-specialized) to PTX. `arch` must be sm_80+ / compute_80+ (`cp.async`).
+/// Compile the extra GEMV kernels ([`crate::cuda_ext`]: cp.async pipeline, split-K, LUT,
+/// warp-specialized, batched, bulk/TMA-style) to PTX. `arch` must be sm_80+ / compute_80+ (`cp.async`).
 pub fn compile_ext(arch: &str) -> Result<Ptx> {
     if !crate::tensor_core::arch_has_mma(arch) {
         return Err(Error::Compile(format!(
@@ -170,17 +170,51 @@ pub struct GpuActs {
 }
 
 /// Selectable GEMM/GEMV backend.
-/// Which extra batch-1 kernel [`Gpu::gemv_ext`] launches (see `kernels/ternary_ext.cu`).
+/// Which extra kernel [`Gpu::gemv_ext`] launches (see `kernels/ternary_ext.cu`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ExtKernel {
-    /// 4-stage cp.async weight pipeline per warp; `rows_per_warp` in {1, 2, 4}.
+    /// 4-stage cp.async weight pipeline per warp; `rows_per_warp` in {1, 2, 4}. Batch-1.
     CpAsync { rows_per_warp: u32 },
     /// Split-K with int32 atomics + finalize; `splits = 0` picks [`crate::cuda_ext::splitk_factor`].
+    /// Batch-1.
     SplitK { splits: u32 },
-    /// T-MAC style table lookup (natural layout).
+    /// T-MAC style table lookup (natural layout). Batch-1.
     Lut,
-    /// 1 producer warp (cp.async) + 4 consumer warps, named-barrier ring.
+    /// 1 producer warp (cp.async) + 4 consumer warps, named-barrier ring. Batch-1.
     WarpSpecialized,
+    /// Tiled W2A8 GEMV for batch 1..=16; one K-chunk of weights is reused across the batch.
+    Batched,
+    /// Same math as [`Self::CpAsync`] with `rows_per_warp = 2`, but weight chunks are prefetched
+    /// with `cp.async.bulk` (TMA-style) on sm_90+ / sm_120, and with `cp.async` 16B on sm_80/86/89.
+    /// Batch-1.
+    Bulk,
+}
+
+/// Heuristic for which extra kernel to launch. **Not a measured speed claim.** `batch > 1`
+/// always picks the tiled batched path; short-N / long-K picks split-K; Hopper/Blackwell
+/// (sm_90+, including sm_120) pick the bulk-prefetch path; otherwise cp.async, with two rows
+/// per warp on sm_120 or when K is long.
+pub fn pick_ext_kernel(
+    cc: (i32, i32),
+    sm_count: usize,
+    n: usize,
+    k: usize,
+    batch: usize,
+) -> ExtKernel {
+    if batch > 1 {
+        return ExtKernel::Batched;
+    }
+    if crate::cuda_ext::splitk_factor(sm_count, n, k) > 1 {
+        return ExtKernel::SplitK { splits: 0 };
+    }
+    if cc >= (9, 0) {
+        return ExtKernel::Bulk;
+    }
+    let rows = if cc >= (8, 9) && k >= 4096 { 2 } else { 1 };
+    let rows = if cc >= (12, 0) { 2 } else { rows };
+    ExtKernel::CpAsync {
+        rows_per_warp: rows,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -790,14 +824,33 @@ impl Gpu {
         scratch: Option<&mut CudaSlice<i32>>,
     ) -> Result<()> {
         use crate::cuda_ext as x;
-        Self::check_common(w, 1, residual, out)?;
-        if a.batch != 1 || a.k != w.k {
-            return shape_err("gemv_ext takes batch-1 activations matching K");
+        if a.k != w.k {
+            return shape_err("gemv_ext activations must match K");
+        }
+        match kind {
+            ExtKernel::Batched => {
+                if !(1..=x::BAT_MAX).contains(&a.batch) {
+                    return shape_err(format!(
+                        "batched kernel supports batch 1..={}, got {}",
+                        x::BAT_MAX,
+                        a.batch
+                    ));
+                }
+                Self::check_common(w, a.batch, residual, out)?;
+            }
+            _ => {
+                if a.batch != 1 {
+                    return shape_err(
+                        "this extra kernel takes batch-1 activations; use ExtKernel::Batched",
+                    );
+                }
+                Self::check_common(w, 1, residual, out)?;
+            }
         }
         if self._ext_module.is_none() {
             return Err(Error::Compile("extra GEMV kernels need sm_80+".into()));
         }
-        let (n, k, act) = (w.n as i32, w.k as i32, act as i32);
+        let (n, k, act, batch) = (w.n as i32, w.k as i32, act as i32, a.batch as i32);
         let null = 0u64;
         macro_rules! res {
             ($b:expr) => {
@@ -904,6 +957,53 @@ impl Gpu {
                 res!(b);
                 b.arg(out).arg(&n).arg(&k).arg(&act);
                 // SAFETY: shapes validated above; smem sized by warpspec_smem_bytes.
+                unsafe { b.launch(cfg) }?;
+            }
+            ExtKernel::Batched => {
+                let smem = x::batched_smem_bytes(a.batch);
+                if smem > 48 * 1024 {
+                    return shape_err(format!(
+                        "batch={} needs {smem} B of smem (> 48 KiB)",
+                        a.batch
+                    ));
+                }
+                let rows_per_block = x::BAT_WARPS * x::BAT_R;
+                let cfg = LaunchConfig {
+                    grid_dim: (w.n.div_ceil(rows_per_block) as u32, 1, 1),
+                    block_dim: ((x::BAT_WARPS * 32) as u32, 1, 1),
+                    shared_mem_bytes: smem as u32,
+                };
+                let mut b = self.stream.launch_builder(self.func("tgx_gemv_batched"));
+                b.arg(&w.permuted)
+                    .arg(&w.row_scale)
+                    .arg(&a.q)
+                    .arg(&a.s)
+                    .arg(&a.sum);
+                res!(b);
+                b.arg(out).arg(&n).arg(&k).arg(&batch).arg(&act);
+                // SAFETY: shapes validated above; smem sized by batched_smem_bytes.
+                unsafe { b.launch(cfg) }?;
+            }
+            ExtKernel::Bulk => {
+                let smem = x::bulk_smem_bytes(w.k);
+                if smem > 48 * 1024 {
+                    return shape_err(format!("K={} needs {smem} B of smem (> 48 KiB)", w.k));
+                }
+                let rows_per_block = x::CP_WARPS * 2;
+                let cfg = LaunchConfig {
+                    grid_dim: (w.n.div_ceil(rows_per_block) as u32, 1, 1),
+                    block_dim: ((x::CP_WARPS * 32) as u32, 1, 1),
+                    shared_mem_bytes: smem as u32,
+                };
+                let mut b = self.stream.launch_builder(self.func("tgx_gemv_bulk_r2"));
+                b.arg(&w.permuted)
+                    .arg(&w.row_scale)
+                    .arg(&a.q)
+                    .arg(&a.s)
+                    .arg(&a.sum);
+                res!(b);
+                b.arg(out).arg(&n).arg(&k).arg(&act);
+                // SAFETY: shapes validated above; smem sized by bulk_smem_bytes.
                 unsafe { b.launch(cfg) }?;
             }
         }
@@ -1169,4 +1269,38 @@ pub fn time_us(
     }
     samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
     Ok(samples[samples.len() / 2])
+}
+
+#[cfg(test)]
+mod pick_tests {
+    use super::{pick_ext_kernel, ExtKernel};
+
+    #[test]
+    fn pick_ext_kernel_prefers_batched_splitk_and_bulk() {
+        assert_eq!(
+            pick_ext_kernel((8, 0), 108, 4096, 4096, 8),
+            ExtKernel::Batched
+        );
+        assert!(matches!(
+            pick_ext_kernel((8, 0), 170, 1024, 16384, 1),
+            ExtKernel::SplitK { .. }
+        ));
+        // Wide N so split-K does not fire; sm_90+ / sm_120 should pick bulk.
+        assert_eq!(
+            pick_ext_kernel((9, 0), 132, 16384, 4096, 1),
+            ExtKernel::Bulk
+        );
+        assert_eq!(
+            pick_ext_kernel((12, 0), 170, 16384, 4096, 1),
+            ExtKernel::Bulk
+        );
+        assert_eq!(
+            pick_ext_kernel((8, 0), 108, 4096, 4096, 1),
+            ExtKernel::CpAsync { rows_per_warp: 1 }
+        );
+        assert_eq!(
+            pick_ext_kernel((8, 9), 144, 16384, 11008, 1),
+            ExtKernel::CpAsync { rows_per_warp: 2 }
+        );
+    }
 }

@@ -15,7 +15,13 @@ All notable changes are listed here. The format follows
   with dense 0.8671 → 0.9231. `--recipe legacy` reproduces the original run. Walk-forward expanding-window folds (`--walk-forward`) on the same day: QAT mean AUC 0.7124 ± 0.0130 (four folds; not independent).
   Unit tests: `python3 scripts/test_itch_train.py`. Results: `results/itch-20261125-distill/`,
   `docs/ITCH_REPLAY.md`.
-
+* Extra CUDA kernels for batched decode and Hopper/Blackwell prefetch (`kernels/ternary_ext.cu`):
+  `tgx_gemv_batched` (W2A8 GEMV, batch 1..16, weight tiles reused across the batch) and
+  `tgx_gemv_bulk_r2` (`cp.async.bulk` / TMA-style weight prefetch on sm_90+ including sm_120,
+  `cp.async` fallback on sm_80). CPU-side `reference_gemm` / `emulate_batched` are bit-exact;
+  `pick_ext_kernel` picks batched / split-K / bulk / cp.async from the device shape.
+  **No GPU timings were measured** (authoring machine has no NVIDIA GPU). Run
+  `scripts/gpu_bench.sh` on a CUDA box (`docs/CUDA_EXT.md`).
 * `cpu_lanes::PackedLanes`: rows-in-lanes 2-bit GEMV for AVX-512 VNNI with GFNI (or VBMI)
   decode, a fused bit-exact dequant/bias/ReLU epilogue that also returns `max|out|`, and a
   threaded path on `SpinPool`. Default `CpuEngine` batch-1 path on AVX-512; `with_row_packed()`
