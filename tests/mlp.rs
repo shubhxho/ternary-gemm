@@ -186,7 +186,7 @@ fn simd_quantize_matches_scalar_oracle() {
 
 #[test]
 fn dense_kmajor_matches_row_major_dense() {
-    use rand::{rngs::StdRng, Rng, SeedableRng};
+    use rand::{rngs::StdRng, RngExt, SeedableRng};
     use ternary_gemm::mlp::{Act, DenseF32KMajor, DenseF32Mlp};
     let mut rng = StdRng::seed_from_u64(11);
     for dims in [vec![64usize, 256, 256, 1], vec![32, 48, 16, 3]] {
