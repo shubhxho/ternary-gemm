@@ -7,6 +7,12 @@ All notable changes are listed here. The format follows
 ## [Unreleased]
 
 ### Added
+* ITCH 5.0 replay workload (`src/itch.rs`, `itch` binary, `scripts/itch_*.{sh,py}`): Nasdaq
+  TotalView-ITCH parser, order-by-order book, top-of-book features, a dense vs ternary (QAT/PTQ)
+  order-book model with chronological held-out evaluation, and per-stage replay latency. Measured
+  on one public day (2019-01-30, 5 symbols); GPU replay script provided, not run
+  (`docs/ITCH_REPLAY.md`, `results/itch-20261125/`).
+* `mlp::DenseF32Mlp::from_f32` and `mlp::DenseF32KMajor` (AVX-512 k-major dense f32 baseline).
 * `cpu_packed::Packed2`: 16-row × 256-K blocked 2-bit layout with an AVX-512 VBMI/VNNI GEMV
   (`vpmultishiftqb` decode + `vpdpbusd`, 16 accumulators), AVX2 and scalar fallbacks, and a
   bit-exact vectorized epilogue. Used by `CpuEngine` (AVX-512 only) and `CpuTernary`. Measured p50
