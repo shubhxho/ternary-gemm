@@ -20,8 +20,8 @@
 //! (batch 1 sequentially on the CPU; `--batch B` independent samples per launch on the GPU).
 //!
 //! Model file (`.tgmlp`, written by `scripts/itch_train.py`), little-endian:
-//! `b"TGMLP1\0\0"`, u32 n_dims, u32 dims[n_dims], u32 hidden_act (1 = relu), f32 mean[in],
-//! f32 std[in], then per layer f32 w[n*k] (row-major `[n][k]`), f32 b[n]. `dense` runs those
+//! `b"TGMLP1\0\0"`, `u32 n_dims`, `u32 dims[n_dims]`, `u32 hidden_act` (1 = relu), `f32 mean[in]`,
+//! `f32 std[in]`, then per layer `f32 w[n*k]` (row-major `[n][k]`), `f32 b[n]`. `dense` runs those
 //! weights in f32 with per-row dot products ([`DenseF32Mlp`]), `dense-kmajor` in f32 with
 //! transposed weights and 512-bit FMAs ([`DenseF32KMajor`], the stronger dense baseline);
 //! `ternary` quantizes them with absmean per row (what QAT trained against) and runs the

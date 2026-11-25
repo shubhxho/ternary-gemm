@@ -168,7 +168,9 @@ Measured on this repo's build machine (**CPU only**: Intel Xeon cloud VM, 8 vCPU
 
 ![CPU latency percentiles, measured](results/20261122-025900-cpu-latency-tail.png)
 
-**Current (Packed2 + vectorized epilogue, Nov 22 2026).** Same VM, `--features avx512`, pinned to core 3, 20,000 requests after 2,000 warm-up, **CPU only**. Before = `d39d557` rebuilt and run in the same session; medians of two interleaved runs. Raw data: [`results/20261122-195100-cpu-latency-avx512-packed2.json`](results/20261122-195100-cpu-latency-avx512-packed2.json); details in [docs/CPU_PERF.md](docs/CPU_PERF.md).
+**Latest (rows-in-lanes kernel, Nov 25 2026).** `CpuEngine` on AVX-512 now uses `cpu_lanes` (GFNI/VBMI decode, no transpose-reduce, fused bit-exact epilogue). Same VM, before = `main` 75af843 (Packed2), medians of three interleaved runs, p50 µs: tiny 1.09 → **0.59**, small 9.32 → **5.98**, medium 20.60 → **13.63**; at 4 threads small 5.81 → **4.14**, medium 10.11 → **8.84**. ITCH replay end to end (ternary): p50 1.455 → **0.895 µs**, p99 2.11 → **1.47 µs**. Details: [CPU_PERF](docs/CPU_PERF.md), [ITCH_REPLAY](docs/ITCH_REPLAY.md). The table below is the previous (Packed2) round.
+
+**Previous (Packed2 + vectorized epilogue, Nov 22 2026).** Same VM, `--features avx512`, pinned to core 3, 20,000 requests after 2,000 warm-up, **CPU only**. Before = `d39d557` rebuilt and run in the same session; medians of two interleaved runs. Raw data: [`results/20261122-195100-cpu-latency-avx512-packed2.json`](results/20261122-195100-cpu-latency-avx512-packed2.json); details in [docs/CPU_PERF.md](docs/CPU_PERF.md).
 
 | model (widths) | ternary SIMD before | ternary SIMD after | speedup | after, 4 threads | dense f32 SIMD |
 |---|---|---|---|---|---|
@@ -344,6 +346,7 @@ src/bin/latency.rs        batch-1 end-to-end latency benchmark (p50..max, histog
 examples/signal_model.rs  synthetic feature-stream inference loop
 src/bin/compile_check.rs  NVRTC + ptxas register/spill report (no GPU needed)
 src/cpu.rs                CPU W2A8 backend (any batch, SIMD, threads) + fast bit-exact quantizer
+src/cpu_lanes.rs          rows-in-lanes 2-bit GEMV (AVX-512 VNNI + GFNI/VBMI), fused epilogue; default batch-1 path
 src/cpu_packed.rs         Packed2 layout: AVX-512 VBMI/VNNI + AVX2 + scalar GEMV, vectorized epilogue
 src/spin_pool.rs          spin-wait worker pool (epoch handoff) for low-latency parallel GEMV
 kernels/ternary_ext.cu    cp.async / split-K / LUT / warp-specialized GEMV kernels (sm_80+)

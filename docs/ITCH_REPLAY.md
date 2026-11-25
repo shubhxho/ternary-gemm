@@ -80,6 +80,58 @@ How to read it:
 * Both learned models beat the best non-ML baseline (L1 queue imbalance) by about 0.04 AUC.
 * This is a prediction-quality test, not a strategy: no costs, queue position, fills or P&L.
 
+## Hot-path round (Nov 25): ternary end to end 1.46 → 0.90 µs p50
+
+Same slice, same model (`qat.tgmlp`), same harness, `taskset -c 3`. "Before" is `main` at
+`75af843`, "after" is this branch; the two binaries were run interleaved in one session, three
+replays each for the ternary engine and two each for `--engine none`. Cells are medians of the
+runs, in ns. Raw files: [`results/itch-20261125-perf/`](../results/itch-20261125-perf/).
+
+| stage (ternary engine) | p50 before | p50 after | p99 before | p99 after |
+|---|---|---|---|---|
+| parse (all messages) | 25.8 | 23.3 | 43.3 | 39.2 |
+| book update (all messages) | 72.5 | 62.5 | 405.8 | 336.7 |
+| features + normalize | 259.2 | **230.0** | 640.8 | **579.2** |
+| inference | 1,083.3 | **554.2** | 1,418.3 | **833.3** |
+| **end to end, message → decision** | **1,455.0** | **895.0** | **2,108.3** | **1,472.5** |
+
+* End-to-end p99.9: 6,616 → 5,577 ns (median of 3; still dominated by VM preemption).
+* Replay throughput (untimed pass): 0.70 → 1.14 M msgs/s.
+* Inference only, back to back over all 6.97M feature vectors: 1,087.8 → 548.5 ns per decision.
+* `--engine none` (parse + book + features only), end-to-end p50: 324 / 328 → 295 / 298 ns
+  (two runs each); features p50 216 / 225 → 196 / 201 ns. p99 was unchanged within noise
+  (623 / 635 → 622 / 606 ns), and the book-update stage alone did not move measurably there
+  (59 → 58 ns), so the book-stage drop in the ternary table is mostly less cache pressure from
+  the smaller inference, not the book change itself.
+* Inference is now about 62% of mean end-to-end time (was 73–75%).
+
+What changed:
+
+1. **Inference** uses the new rows-in-lanes AVX-512 kernel with a fused epilogue and a quantizer
+   that reuses the previous layer's max (details and per-model numbers in
+   [`CPU_PERF.md`](CPU_PERF.md)). This is most of the gain.
+2. **Features.** Each side's book tree is walked once (touch + 4 depth levels from one iterator
+   instead of separate lookups), `log(dt)` is computed once, and `ln(1+x)` for integer arguments
+   (sizes, counts, order-flow imbalance) comes from a 4,096-entry table, falling back to libm when
+   the argument is not an exact small integer. A 32,768-entry table was also tried; it had worse
+   p99 in an A/B, so the 16 KiB one was kept.
+3. **Book level update** does one B-tree descent (`Entry` API) instead of a lookup followed by an
+   insert/remove.
+
+Bit-exactness: the original feature code is kept as `itch::features_reference`, and the warm-up
+pass of every replay now runs it on its own book state and asserts identical feature bits on
+every decision (6,971,855 decisions checked, logged as `features bit-exact vs features_reference`
+and recorded as `features_bitexact_checked` in the JSON). The predictions written by
+`--preds-out` are byte-identical to the committed run's `preds_ternary_qat.f32` (`cmp`). Unit
+tests cover the table, the book update on 60k random messages, and the kernels.
+
+Caveats: the "before" figures here (1,455 / 2,108 ns) are lower than the table below
+(1,518 / 2,877 ns), which came from an earlier session; compare within a table, not across.
+The VM is shared and not core-isolated, so p99 moves by ±15% between runs; the inference and
+end-to-end p50 gains are far outside that range, the features gain (~11%) is near it.
+
+The tables below are the original measurements from the first ITCH round, kept for reference.
+
 ## Latency: where the time goes (batch 1, one pinned core)
 
 Each message is timed with the TSC (0.4166 ns/tick, about 12 ns timer overhead included in each

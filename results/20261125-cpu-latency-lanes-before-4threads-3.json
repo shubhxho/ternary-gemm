@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "kind": "latency",
+  "tool": "latency",
+  "environment": {
+    "crate_version": "0.1.0",
+    "git_sha": null,
+    "rustc": "rustc 1.100.0 (0ef1bc386 2026-11-09)",
+    "os": "linux-x86_64",
+    "kernel": "6.12.113+",
+    "cpu": "Intel(R) Xeon(R) Processor",
+    "logical_cpus": 4,
+    "cpu_governor": null,
+    "gpu": null,
+    "unix_time": 1795593666
+  },
+  "results": [
+    {"model": "tiny 64-256-256-1", "path": "CPU ternary SIMD (CpuEngine)", "device": "CPU: Intel(R) Xeon(R) Processor; 8 logical CPUs; pinned to 4", "iters": 20000, "p50_us": 1.086, "p90_us": 1.108, "p99_us": 1.274, "p999_us": 1.465, "max_us": 45.748, "mean_us": 1.0939354999999076, "std_us": 0.34185355159739095, "joules_per_inference": null},
+    {"model": "tiny 64-256-256-1", "path": "CPU ternary SIMD x4 threads", "device": "CPU: Intel(R) Xeon(R) Processor; 8 logical CPUs; pinned to 4", "iters": 20000, "p50_us": 1.09, "p90_us": 1.115, "p99_us": 1.335, "p999_us": 1.58, "max_us": 9.601, "mean_us": 1.1043731499999696, "std_us": 0.13153126818014596, "joules_per_inference": null},
+    {"model": "tiny 64-256-256-1", "path": "CPU dense f32 SIMD", "device": "CPU: Intel(R) Xeon(R) Processor; 8 logical CPUs; pinned to 4", "iters": 20000, "p50_us": 4.891, "p90_us": 5.014, "p99_us": 6.572, "p999_us": 11.117, "max_us": 29.885, "mean_us": 5.010895999999785, "std_us": 0.528117329846313, "joules_per_inference": null},
+    {"model": "small 256-1024-1024-16", "path": "CPU ternary SIMD (CpuEngine)", "device": "CPU: Intel(R) Xeon(R) Processor; 8 logical CPUs; pinned to 4", "iters": 20000, "p50_us": 9.322, "p90_us": 9.421, "p99_us": 11.666, "p999_us": 18.487, "max_us": 44.616, "mean_us": 9.47923749999982, "std_us": 0.7380135161999076, "joules_per_inference": null},
+    {"model": "small 256-1024-1024-16", "path": "CPU ternary SIMD x4 threads", "device": "CPU: Intel(R) Xeon(R) Processor; 8 logical CPUs; pinned to 4", "iters": 20000, "p50_us": 5.811, "p90_us": 6.06, "p99_us": 10.194, "p999_us": 14.25, "max_us": 5351.06, "mean_us": 6.226799450000012, "std_us": 37.8036147557893, "joules_per_inference": null},
+    {"model": "small 256-1024-1024-16", "path": "CPU dense f32 SIMD", "device": "CPU: Intel(R) Xeon(R) Processor; 8 logical CPUs; pinned to 4", "iters": 20000, "p50_us": 149.402, "p90_us": 164.419, "p99_us": 339.465, "p999_us": 428.238, "max_us": 44648.781, "mean_us": 158.93459694999993, "std_us": 320.2884939614455, "joules_per_inference": null},
+    {"model": "medium 1024-1024-1024-1024-4", "path": "CPU ternary SIMD (CpuEngine)", "device": "CPU: Intel(R) Xeon(R) Processor; 8 logical CPUs; pinned to 4", "iters": 20000, "p50_us": 20.602, "p90_us": 23.984, "p99_us": 68.408, "p999_us": 95.293, "max_us": 188.769, "mean_us": 22.79919129999988, "std_us": 8.75976851048041, "joules_per_inference": null},
+    {"model": "medium 1024-1024-1024-1024-4", "path": "CPU ternary SIMD x4 threads", "device": "CPU: Intel(R) Xeon(R) Processor; 8 logical CPUs; pinned to 4", "iters": 20000, "p50_us": 10.113, "p90_us": 10.628, "p99_us": 20.379, "p999_us": 23.602, "max_us": 36.669, "mean_us": 10.366245949999906, "std_us": 1.4532337759488654, "joules_per_inference": null},
+    {"model": "medium 1024-1024-1024-1024-4", "path": "CPU dense f32 SIMD", "device": "CPU: Intel(R) Xeon(R) Processor; 8 logical CPUs; pinned to 4", "iters": 20000, "p50_us": 409.92, "p90_us": 440.887, "p99_us": 508.201, "p999_us": 599.428, "max_us": 26510.715, "mean_us": 421.2059322999988, "std_us": 232.7969128413732, "joules_per_inference": null}
+  ]
+}

@@ -1,0 +1,13 @@
+{
+"engine": "none", "engine_desc": "none (features only)", "simd": "avx512-vnni",
+"data": "/workspace/itch-data/slice5.itch", "symbols": [{"locate": 14, "symbol": "AAPL"}, {"locate": 331, "symbol": "AMD"}, {"locate": 1718, "symbol": "CSCO"}, {"locate": 4118, "symbol": "INTC"}, {"locate": 5217, "symbol": "MSFT"}],
+"messages": 7189693, "decisions": 6971855, "unknown_refs": 0, "ns_per_tick": 0.4166620035255763, "timer_overhead_p50_ns": 11.7,
+"replay_throughput_msgs_per_s": 3378829, "replay_clean_wall_s": 2.1279, "timed_wall_s": 2.4041, "timed_cpu_s": 2.4100,
+"bitexact_checked": 0, "features_bitexact_checked": 6971855,
+"parse": {"n": 7189693, "mean_ns": 20.8, "p50_ns": 21.7, "p90_ns": 26.7, "p99_ns": 36.7, "p999_ns": 100.0, "max_ns": 20313.9},
+"book": {"n": 7189693, "mean_ns": 72.4, "p50_ns": 58.3, "p90_ns": 115.0, "p99_ns": 285.8, "p999_ns": 1440.0, "max_ns": 124472.8},
+"parse_book_decision": {"n": 6971855, "mean_ns": 89.3, "p50_ns": 78.3, "p90_ns": 133.3, "p99_ns": 283.3, "p999_ns": 502.5, "max_ns": 73006.7},
+"features": {"n": 6971855, "mean_ns": 202.4, "p50_ns": 195.8, "p90_ns": 317.5, "p99_ns": 485.0, "p999_ns": 2766.6, "max_ns": 1029106.8},
+"inference": {"n": 6971855, "mean_ns": 14.2, "p50_ns": 14.2, "p90_ns": 15.8, "p99_ns": 18.3, "p999_ns": 34.2, "max_ns": 12317.4},
+"end_to_end": {"n": 6971855, "mean_ns": 306.0, "p50_ns": 295.0, "p90_ns": 431.7, "p99_ns": 621.7, "p999_ns": 2960.8, "max_ns": 1029341.8}
+}

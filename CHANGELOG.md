@@ -7,6 +7,18 @@ All notable changes are listed here. The format follows
 ## [Unreleased]
 
 ### Added
+* `cpu_lanes::PackedLanes`: rows-in-lanes 2-bit GEMV for AVX-512 VNNI with GFNI (or VBMI)
+  decode, a fused bit-exact dequant/bias/ReLU epilogue that also returns `max|out|`, and a
+  threaded path on `SpinPool`. Default `CpuEngine` batch-1 path on AVX-512; `with_row_packed()`
+  keeps Packed2. Measured p50 vs Packed2 (`main` 75af843), same VM: tiny 1.09 → 0.59 µs, small
+  9.32 → 5.98 µs, medium 20.60 → 13.63 µs; 4 threads small 5.81 → 4.14, medium 10.11 → 8.84
+  (`docs/CPU_PERF.md`).
+* `mlp::quantize_with_max` and an AVX-512 quantizer (k = 256: 27 → 17 ns).
+* ITCH hot path: single tree walk per side in `features`, integer `ln(1+x)` table, single-descent
+  book update; `features_reference` oracle checked on every warm-up decision. Ternary replay end
+  to end p50 1.455 → 0.895 µs, p99 2.11 → 1.47 µs, 0.70 → 1.14 M msgs/s (`docs/ITCH_REPLAY.md`,
+  `results/itch-20261125-perf/`).
+
 * ITCH 5.0 replay workload (`src/itch.rs`, `itch` binary, `scripts/itch_*.{sh,py}`): Nasdaq
   TotalView-ITCH parser, order-by-order book, top-of-book features, a dense vs ternary (QAT/PTQ)
   order-book model with chronological held-out evaluation, and per-stage replay latency. Measured
@@ -65,6 +77,7 @@ All notable changes are listed here. The format follows
 * `bench/solar`: reproducible Paradigm Solar vs solc benchmark (pinned compiler and OpenZeppelin / Uniswap v3/v4 corpora), with measured median/p95 times, peak RSS, and a chart.
 
 ### Changed
+* `SpinPool`: padded epoch and per-worker completion flags instead of a shared counter.
 * GPU shape errors now say how to proceed (chunk batches > 16, zero-pad K, or use the CPU
   backend).
 
