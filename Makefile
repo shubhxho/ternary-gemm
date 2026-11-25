@@ -2,6 +2,8 @@
 CARGO ?= cargo
 PY ?= python3
 
+# make langs [ZIG=... MOJO=... JULIA=... FUTHARK=... PYTHON=...]: other-language ports vs the Rust vectors
+.PHONY: langs lang-vectors
 .PHONY: all check fmt fmt-check clippy test doc compile-check latency-cpu bench hooks deny msrv fuzz latency-json compare results-validate roofline autotune clean
 
 all: check
@@ -73,3 +75,9 @@ fuzz: ## run every fuzz target for FUZZ_SECS (default 60) seconds (nightly + car
 
 clean:
 	$(CARGO) clean
+
+lang-vectors:
+	$(CARGO) run --release --example lang_vectors
+
+langs:
+	scripts/langs_check.sh

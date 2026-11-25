@@ -24,6 +24,7 @@
 
    tuning.rs (arch profiles, occupancy, roofline)  ->  autotune.rs (times configs on the device)
    energy.rs (RAPL, NVML)  +  results.rs (env capture, JSON)  ->  latency/bench/autotune binaries
+   tensor_core.rs: CPU reference for the sm_80+ mma.sync path (see docs/TENSOR_CORES.md)
 ```
 
 ## Invariants

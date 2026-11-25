@@ -1,0 +1,188 @@
+//
+// ternary-gemm: batch-1 W2A8 ternary GEMV written directly in PTX (no CUDA C++).
+//
+// Same data and arithmetic as ternary_i8_b1_r1 in kernels/ternary.cu, spelled out by hand:
+//   * weights in the "permuted" layout (16 codes w+1 per u32; rows in 128-word chunks; lane l
+//     loads the uint4 at chunk offset 4*l, which holds k-blocks q*L + l for q = 0..3, L = Wc/4);
+//   * int8 activations xq[K] with scale xs[0] and sum xsum[0] (from quantize_i8);
+//   * one warp per output row, dp4a.u32.s32 (unsigned codes x signed activations), butterfly
+//     shuffle reduction, then the bit-exact epilogue
+//         out[row] = cvt.rn.f16( mul.rn( div.rn( f32(acc - xsum), xs ), wscale[row] ) ).
+// Launch: block = 32 * W threads (W warps = W rows), grid = ceil(N / W). K % 64 == 0.
+// Assembled by ptxas for sm_61+ (dp4a); see tests/nvrtc_sm120.rs.
+//
+.version 7.0
+.target sm_61
+.address_size 64
+
+.visible .entry ternary_gemv_ptx(
+    .param .u64 p_w,
+    .param .u64 p_wscale,
+    .param .u64 p_xq,
+    .param .u64 p_xs,
+    .param .u64 p_xsum,
+    .param .u64 p_out,
+    .param .u32 p_n,
+    .param .u32 p_k
+)
+{
+    .reg .pred  %p<4>;
+    .reg .b32   %r<48>;
+    .reg .b64   %rd<16>;
+    .reg .f32   %f<4>;
+    .reg .b16   %h<2>;
+
+    ld.param.u64    %rd1, [p_w];
+    ld.param.u64    %rd2, [p_wscale];
+    ld.param.u64    %rd3, [p_xq];
+    ld.param.u64    %rd4, [p_xs];
+    ld.param.u64    %rd5, [p_xsum];
+    ld.param.u64    %rd6, [p_out];
+    ld.param.u32    %r1, [p_n];
+    ld.param.u32    %r2, [p_k];
+    cvta.to.global.u64 %rd1, %rd1;
+    cvta.to.global.u64 %rd2, %rd2;
+    cvta.to.global.u64 %rd3, %rd3;
+    cvta.to.global.u64 %rd4, %rd4;
+    cvta.to.global.u64 %rd5, %rd5;
+    cvta.to.global.u64 %rd6, %rd6;
+
+    // lane, row = ctaid.x * (ntid.x / 32) + tid.x / 32
+    mov.u32         %r3, %tid.x;
+    and.b32         %r4, %r3, 31;              // lane
+    shr.u32         %r5, %r3, 5;               // warp in block
+    mov.u32         %r6, %ntid.x;
+    shr.u32         %r6, %r6, 5;
+    mov.u32         %r7, %ctaid.x;
+    mad.lo.u32      %r8, %r7, %r6, %r5;        // row
+    setp.ge.u32     %p1, %r8, %r1;
+    @%p1 bra        EXIT;                      // whole warp leaves together
+
+    shr.u32         %r9, %r2, 4;               // KW = K / 16 words per row
+    mul.wide.u32    %rd7, %r8, %r9;
+    shl.b64         %rd7, %rd7, 2;
+    add.s64         %rd8, %rd1, %rd7;          // row base pointer
+    mov.u32         %r10, 0;                   // acc
+    mov.u32         %r11, 0;                   // base (word index of the chunk)
+
+CHUNK:
+    setp.ge.u32     %p2, %r11, %r9;
+    @%p2 bra        REDUCE;
+    sub.u32         %r12, %r9, %r11;
+    min.u32         %r12, %r12, 128;           // Wc
+    shr.u32         %r13, %r12, 2;             // L = Wc / 4
+    setp.ge.u32     %p3, %r4, %r13;
+    @%p3 bra        NEXT;                      // lanes past L idle on a short tail chunk
+
+    // this lane's uint4 of codes: words base + 4*lane .. +3
+    shl.b32         %r14, %r4, 2;
+    add.u32         %r14, %r14, %r11;
+    mul.wide.u32    %rd9, %r14, 4;
+    add.s64         %rd9, %rd8, %rd9;
+    ld.global.nc.v4.u32 {%r15, %r16, %r17, %r18}, [%rd9];
+
+    // q = 0: activations of k-block base + lane
+    add.u32         %r19, %r11, %r4;
+    mul.wide.u32    %rd10, %r19, 16;
+    add.s64         %rd10, %rd3, %rd10;
+    ld.global.nc.v4.u32 {%r20, %r21, %r22, %r23}, [%rd10];
+    and.b32         %r24, %r15, 0x03030303;
+    dp4a.u32.s32    %r10, %r24, %r20, %r10;
+    shr.u32         %r24, %r15, 2;
+    and.b32         %r24, %r24, 0x03030303;
+    dp4a.u32.s32    %r10, %r24, %r21, %r10;
+    shr.u32         %r24, %r15, 4;
+    and.b32         %r24, %r24, 0x03030303;
+    dp4a.u32.s32    %r10, %r24, %r22, %r10;
+    shr.u32         %r24, %r15, 6;
+    and.b32         %r24, %r24, 0x03030303;
+    dp4a.u32.s32    %r10, %r24, %r23, %r10;
+
+    // q = 1: k-block base + L + lane
+    add.u32         %r19, %r19, %r13;
+    mul.wide.u32    %rd10, %r19, 16;
+    add.s64         %rd10, %rd3, %rd10;
+    ld.global.nc.v4.u32 {%r20, %r21, %r22, %r23}, [%rd10];
+    and.b32         %r24, %r16, 0x03030303;
+    dp4a.u32.s32    %r10, %r24, %r20, %r10;
+    shr.u32         %r24, %r16, 2;
+    and.b32         %r24, %r24, 0x03030303;
+    dp4a.u32.s32    %r10, %r24, %r21, %r10;
+    shr.u32         %r24, %r16, 4;
+    and.b32         %r24, %r24, 0x03030303;
+    dp4a.u32.s32    %r10, %r24, %r22, %r10;
+    shr.u32         %r24, %r16, 6;
+    and.b32         %r24, %r24, 0x03030303;
+    dp4a.u32.s32    %r10, %r24, %r23, %r10;
+
+    // q = 2
+    add.u32         %r19, %r19, %r13;
+    mul.wide.u32    %rd10, %r19, 16;
+    add.s64         %rd10, %rd3, %rd10;
+    ld.global.nc.v4.u32 {%r20, %r21, %r22, %r23}, [%rd10];
+    and.b32         %r24, %r17, 0x03030303;
+    dp4a.u32.s32    %r10, %r24, %r20, %r10;
+    shr.u32         %r24, %r17, 2;
+    and.b32         %r24, %r24, 0x03030303;
+    dp4a.u32.s32    %r10, %r24, %r21, %r10;
+    shr.u32         %r24, %r17, 4;
+    and.b32         %r24, %r24, 0x03030303;
+    dp4a.u32.s32    %r10, %r24, %r22, %r10;
+    shr.u32         %r24, %r17, 6;
+    and.b32         %r24, %r24, 0x03030303;
+    dp4a.u32.s32    %r10, %r24, %r23, %r10;
+
+    // q = 3
+    add.u32         %r19, %r19, %r13;
+    mul.wide.u32    %rd10, %r19, 16;
+    add.s64         %rd10, %rd3, %rd10;
+    ld.global.nc.v4.u32 {%r20, %r21, %r22, %r23}, [%rd10];
+    and.b32         %r24, %r18, 0x03030303;
+    dp4a.u32.s32    %r10, %r24, %r20, %r10;
+    shr.u32         %r24, %r18, 2;
+    and.b32         %r24, %r24, 0x03030303;
+    dp4a.u32.s32    %r10, %r24, %r21, %r10;
+    shr.u32         %r24, %r18, 4;
+    and.b32         %r24, %r24, 0x03030303;
+    dp4a.u32.s32    %r10, %r24, %r22, %r10;
+    shr.u32         %r24, %r18, 6;
+    and.b32         %r24, %r24, 0x03030303;
+    dp4a.u32.s32    %r10, %r24, %r23, %r10;
+
+NEXT:
+    add.u32         %r11, %r11, 128;
+    bra.uni         CHUNK;
+
+REDUCE:
+    // butterfly reduction across the warp (all 32 lanes are converged here)
+    shfl.sync.bfly.b32 %r25, %r10, 16, 0x1f, 0xffffffff;
+    add.s32         %r10, %r10, %r25;
+    shfl.sync.bfly.b32 %r25, %r10, 8, 0x1f, 0xffffffff;
+    add.s32         %r10, %r10, %r25;
+    shfl.sync.bfly.b32 %r25, %r10, 4, 0x1f, 0xffffffff;
+    add.s32         %r10, %r10, %r25;
+    shfl.sync.bfly.b32 %r25, %r10, 2, 0x1f, 0xffffffff;
+    add.s32         %r10, %r10, %r25;
+    shfl.sync.bfly.b32 %r25, %r10, 1, 0x1f, 0xffffffff;
+    add.s32         %r10, %r10, %r25;
+    setp.ne.u32     %p1, %r4, 0;
+    @%p1 bra        EXIT;
+
+    // epilogue (lane 0): t = f32(acc - xsum); t = t / xs (rn); t = t * wscale[row] (rn); fp16 rn
+    ld.global.u32   %r26, [%rd5];
+    sub.s32         %r27, %r10, %r26;
+    cvt.rn.f32.s32  %f1, %r27;
+    ld.global.f32   %f2, [%rd4];
+    div.rn.f32      %f1, %f1, %f2;
+    mul.wide.u32    %rd11, %r8, 4;
+    add.s64         %rd11, %rd2, %rd11;
+    ld.global.nc.f32 %f3, [%rd11];
+    mul.rn.f32      %f1, %f1, %f3;
+    cvt.rn.f16.f32  %h1, %f1;
+    mul.wide.u32    %rd12, %r8, 2;
+    add.s64         %rd12, %rd6, %rd12;
+    st.global.b16   [%rd12], %h1;
+
+EXIT:
+    ret;
+}

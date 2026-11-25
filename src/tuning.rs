@@ -206,13 +206,47 @@ pub const SM120_I8_FUSED_REGS: [[u32; 3]; 5] = [
 /// Bytes each warp keeps in flight per main-loop step: one 16-byte `uint4` per lane per row.
 pub const BYTES_IN_FLIGHT_PER_WARP_ROW: u32 = 512;
 
+/// Which kernel family a [`KernelConfig`] names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum KernelBackend {
+    /// `dp4a` kernels (`ternary_i8_*`).
+    #[default]
+    Dp4a,
+    /// Tensor-core `mma.sync` kernels (`ternary_tc_i8` / `ternary_tc_f16`), sm_80+.
+    TensorCore,
+}
+
 /// A launch configuration of the W2A8 kernels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct KernelConfig {
     pub warps: u32,
     pub rows_per_warp: u32,
     /// Fused quantize-in-prologue kernel (single launch) instead of quantize + gemm.
+    /// The tensor-core path is split-only (`fused` must be `false`).
     pub fused: bool,
+    /// Kernel family. Default for existing configs is [`KernelBackend::Dp4a`].
+    pub backend: KernelBackend,
+}
+
+impl KernelConfig {
+    pub fn dp4a(warps: u32, rows_per_warp: u32, fused: bool) -> Self {
+        Self {
+            warps,
+            rows_per_warp,
+            fused,
+            backend: KernelBackend::Dp4a,
+        }
+    }
+
+    /// Tensor-core candidate: `warps` warps per block, 16 rows per warp, split quantize + GEMM.
+    pub fn tensor_core(warps: u32) -> Self {
+        Self {
+            warps,
+            rows_per_warp: 16,
+            fused: false,
+            backend: KernelBackend::TensorCore,
+        }
+    }
 }
 
 /// One modelled configuration.
@@ -333,6 +367,7 @@ pub fn rank_configs(
                     warps,
                     rows_per_warp,
                     fused,
+                    backend: KernelBackend::Dp4a,
                 };
                 if let Some(m) = model_config(spec, sm_count, n, k, batch, cfg, None) {
                     out.push(m);
@@ -364,6 +399,7 @@ pub fn candidates(
             warps: 4,
             rows_per_warp,
             fused: false,
+            backend: KernelBackend::Dp4a,
         };
         if !c.contains(&d) {
             c.push(d);
