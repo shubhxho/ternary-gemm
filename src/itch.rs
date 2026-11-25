@@ -564,8 +564,9 @@ fn slog(v: f32) -> f32 {
 }
 
 /// Entries of the `ln(1 + i)` table: share counts, queue sizes and level counts are integers and
-/// mostly below this (on the 2019-01-30 slice about 90% of touch sizes are under 2^12).
-const LN1P_TABLE: usize = 1 << 15;
+/// mostly below this (on the 2019-01-30 slice about 88% of touch sizes are under 2^12). A
+/// 16 KiB table measured slightly better tails than a 128 KiB one (less L1/L2 pressure).
+const LN1P_TABLE: usize = 1 << 12;
 
 #[inline]
 fn ln1p_table() -> &'static [f32] {
