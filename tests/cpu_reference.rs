@@ -2,7 +2,7 @@
 //! unpacked computation. Run anywhere (no GPU needed).
 
 use half::f16;
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{rngs::StdRng, RngExt, SeedableRng};
 use ternary_gemm::pack::{quantize_absmean, PackedTernary};
 use ternary_gemm::reference::{gemm_f16, gemm_i8, quantize_acts};
 

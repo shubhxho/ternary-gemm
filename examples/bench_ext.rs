@@ -6,7 +6,7 @@
 //! Usage: `cargo run --release --example bench_ext [-- --iters N]`
 
 use half::f16;
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{rngs::StdRng, RngExt, SeedableRng};
 use std::time::Instant;
 use ternary_gemm::cuda_ext::reference_gemv;
 use ternary_gemm::gpu::{ExtKernel, Gpu, Launch};

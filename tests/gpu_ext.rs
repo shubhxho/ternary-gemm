@@ -3,7 +3,7 @@
 //! parts) unless `TERNARY_REQUIRE_GPU=1`.
 
 use half::f16;
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{rngs::StdRng, RngExt, SeedableRng};
 use ternary_gemm::cuda_ext::reference_gemv;
 use ternary_gemm::gpu::{ExtKernel, Gpu};
 use ternary_gemm::mlp::Act;
