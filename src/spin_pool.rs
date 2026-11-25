@@ -7,7 +7,7 @@
 //! dedicated to latency, e.g. a pinned trading process.
 
 use std::cell::UnsafeCell;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
@@ -16,15 +16,23 @@ pub const SPIN_LIMIT: u32 = 1 << 16;
 
 type Job = *const (dyn Fn(usize) + Sync);
 
+/// One cache line (two on CPUs whose adjacent-line prefetcher pairs them) per hot atomic, so the
+/// owner's epoch bump and each worker's completion flag never share a line.
+#[repr(align(128))]
+struct Padded<T>(T);
+
 struct Shared {
-    epoch: AtomicU64,
-    done: AtomicUsize,
+    /// Bumped by the owner to publish a job; read (spun on) by every worker.
+    epoch: Padded<AtomicU64>,
+    /// Per-worker "finished epoch e" flags, written only by their worker (no contended RMW).
+    done: Box<[Padded<AtomicU64>]>,
     stop: AtomicBool,
     job: UnsafeCell<Option<Job>>,
 }
 
-// SAFETY: `job` is written only by the owner while no job is in flight (all workers finished the
-// previous epoch), and read by workers only after observing the epoch bump (Acquire/Release).
+// SAFETY: `job` is written only by the owner while no job is in flight (every worker has stored
+// the previous epoch into its `done` flag), and read by workers only after observing the epoch
+// bump (Acquire/Release).
 unsafe impl Sync for Shared {}
 unsafe impl Send for Shared {}
 
@@ -49,8 +57,8 @@ impl SpinPool {
     pub fn new(threads: usize) -> Self {
         let threads = threads.max(1);
         let shared = Arc::new(Shared {
-            epoch: AtomicU64::new(0),
-            done: AtomicUsize::new(0),
+            epoch: Padded(AtomicU64::new(0)),
+            done: (0..threads).map(|_| Padded(AtomicU64::new(0))).collect(),
             stop: AtomicBool::new(false),
             job: UnsafeCell::new(None),
         });
@@ -85,17 +93,19 @@ impl SpinPool {
         // this epoch, and we do not return (so `f` stays alive) before that.
         let ptr: Job = unsafe { std::mem::transmute::<&(dyn Fn(usize) + Sync), Job>(dynf) };
         unsafe { *self.shared.job.get() = Some(ptr) };
-        self.shared.done.store(0, Ordering::Relaxed);
-        self.shared.epoch.fetch_add(1, Ordering::Release);
+        // Only the owner writes the epoch, so a plain load + store is enough.
+        let e = self.shared.epoch.0.load(Ordering::Relaxed) + 1;
+        self.shared.epoch.0.store(e, Ordering::Release);
         f(0);
-        let want = self.threads - 1;
-        let mut spins = 0u32;
-        while self.shared.done.load(Ordering::Acquire) != want {
-            spins = spins.saturating_add(1);
-            if spins < SPIN_LIMIT {
-                std::hint::spin_loop();
-            } else {
-                std::thread::yield_now();
+        for d in &self.shared.done[1..] {
+            let mut spins = 0u32;
+            while d.0.load(Ordering::Acquire) != e {
+                spins = spins.saturating_add(1);
+                if spins < SPIN_LIMIT {
+                    std::hint::spin_loop();
+                } else {
+                    std::thread::yield_now();
+                }
             }
         }
         unsafe { *self.shared.job.get() = None };
@@ -107,7 +117,7 @@ fn worker(sh: Arc<Shared>, id: usize) {
     loop {
         let mut spins = 0u32;
         let e = loop {
-            let e = sh.epoch.load(Ordering::Acquire);
+            let e = sh.epoch.0.load(Ordering::Acquire);
             if e != seen {
                 break e;
             }
@@ -126,14 +136,14 @@ fn worker(sh: Arc<Shared>, id: usize) {
         // the worker count (see `SpinPool::run`).
         let job = unsafe { (*sh.job.get()).expect("job published") };
         unsafe { (*job)(id) };
-        sh.done.fetch_add(1, Ordering::AcqRel);
+        sh.done[id].0.store(e, Ordering::Release);
     }
 }
 
 impl Drop for SpinPool {
     fn drop(&mut self) {
         self.shared.stop.store(true, Ordering::Release);
-        self.shared.epoch.fetch_add(1, Ordering::Release);
+        self.shared.epoch.0.fetch_add(1, Ordering::Release);
         for w in self.workers.drain(..) {
             let _ = w.join();
         }
@@ -143,6 +153,7 @@ impl Drop for SpinPool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicUsize;
 
     #[test]
     fn every_index_runs_once_per_job() {
