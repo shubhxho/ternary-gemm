@@ -21,7 +21,7 @@ jobs:
     name: fmt + clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: false
       - uses: dtolnay/rust-toolchain@stable
@@ -43,7 +43,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: false
       - uses: dtolnay/rust-toolchain@stable
@@ -64,7 +64,7 @@ jobs:
     name: MSRV (1.88)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: false
       - uses: dtolnay/rust-toolchain@1.88
@@ -77,7 +77,7 @@ jobs:
     env:
       RUSTDOCFLAGS: -D warnings
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: false
       - uses: dtolnay/rust-toolchain@stable
@@ -88,7 +88,7 @@ jobs:
     name: NVRTC + ptxas compile check (sm_80..sm_120)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: false
       - uses: dtolnay/rust-toolchain@stable
@@ -111,7 +111,7 @@ jobs:
     name: cargo-deny (advisories, licenses, bans, sources)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: false
       - uses: EmbarkStudios/cargo-deny-action@v2
@@ -122,7 +122,7 @@ jobs:
     name: ruff (scripts, Python bindings)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: false
       - uses: astral-sh/ruff-action@v3
@@ -136,7 +136,7 @@ jobs:
     name: fuzz smoke (nightly, 30 s per target)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: false
       - uses: dtolnay/rust-toolchain@nightly
@@ -155,7 +155,7 @@ jobs:
     name: FPGA skeleton (Icarus, Verilator, HLS C++ testbench)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: false
       - uses: dtolnay/rust-toolchain@stable
@@ -172,7 +172,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: false
       - uses: dtolnay/rust-toolchain@stable
@@ -192,7 +192,7 @@ jobs:
     name: cargo package (crate tarball builds standalone)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: false
       - uses: dtolnay/rust-toolchain@stable
