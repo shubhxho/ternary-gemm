@@ -13,3 +13,7 @@ results/tune-cache.csv
 /langs/vectors
 __pycache__/
 *.pyc
+# Nasdaq ITCH sample data (multi-GB, downloaded by scripts/itch_download.sh), never committed
+/data/itch/
+*.NASDAQ_ITCH50*
+*.itch

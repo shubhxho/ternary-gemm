@@ -773,6 +773,46 @@ impl DenseF32Mlp {
         }
     }
 
+    /// A dense f32 model straight from float weights (`weights[i]` is `[n][k]` row-major), no
+    /// quantization: the baseline for a model trained in full precision. `dims = [in, hidden..,
+    /// out]`; hidden layers use `hidden_act`, the last layer is linear.
+    pub fn from_f32(
+        dims: &[usize],
+        weights: &[Vec<f32>],
+        biases: &[Vec<f32>],
+        hidden_act: Act,
+    ) -> Result<Self, String> {
+        if dims.len() < 2 || weights.len() != dims.len() - 1 || biases.len() != dims.len() - 1 {
+            return Err("need dims.len() - 1 weight and bias tensors".into());
+        }
+        let mut layers = Vec::new();
+        for i in 0..dims.len() - 1 {
+            let (k, n) = (dims[i], dims[i + 1]);
+            if weights[i].len() != n * k || biases[i].len() != n {
+                return Err(format!(
+                    "layer {i}: expected {} weights and {n} biases",
+                    n * k
+                ));
+            }
+            let a = if i + 2 == dims.len() {
+                Act::Identity
+            } else {
+                hidden_act
+            };
+            layers.push((n, k, weights[i].clone(), biases[i].clone(), a));
+        }
+        let d = *dims.iter().max().unwrap();
+        #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
+        let avx2 = std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma");
+        #[cfg(not(all(target_arch = "x86_64", feature = "avx2")))]
+        let avx2 = false;
+        Ok(Self {
+            layers,
+            bufs: [vec![0.0; d], vec![0.0; d]],
+            avx2,
+        })
+    }
+
     /// No heap allocation.
     pub fn forward_into(&mut self, x: &[f32], out: &mut [f32]) {
         let [b0, b1] = &mut self.bufs;
@@ -792,5 +832,160 @@ impl DenseF32Mlp {
             }
             std::mem::swap(&mut cur, &mut nxt);
         }
+    }
+}
+
+/// Dense f32 MLP with k-major (transposed) weights: for each input `k`, broadcast `x[k]` and FMA
+/// a contiguous row of `n` weights into `n / 16` AVX-512 accumulators (no horizontal sums).
+/// A stronger dense baseline than [`DenseF32Mlp`]'s per-row dot products; with the `avx512`
+/// feature on an AVX-512F CPU it uses 512-bit FMAs, otherwise a portable loop the compiler
+/// autovectorizes. Not bit-identical to [`DenseF32Mlp`] (different summation order).
+/// (n, n padded to 16, k, weights `[k][n_pad]`, bias `[n_pad]`, act)
+type KMajorLayer = (usize, usize, usize, Vec<f32>, Vec<f32>, Act);
+
+pub struct DenseF32KMajor {
+    layers: Vec<KMajorLayer>,
+    bufs: [Vec<f32>; 2],
+    avx512: bool,
+}
+
+impl DenseF32KMajor {
+    pub fn from_f32(
+        dims: &[usize],
+        weights: &[Vec<f32>],
+        biases: &[Vec<f32>],
+        hidden_act: Act,
+    ) -> Result<Self, String> {
+        if dims.len() < 2 || weights.len() != dims.len() - 1 || biases.len() != dims.len() - 1 {
+            return Err("need dims.len() - 1 weight and bias tensors".into());
+        }
+        let mut layers = Vec::new();
+        for i in 0..dims.len() - 1 {
+            let (k, n) = (dims[i], dims[i + 1]);
+            if weights[i].len() != n * k || biases[i].len() != n {
+                return Err(format!(
+                    "layer {i}: expected {} weights and {n} biases",
+                    n * k
+                ));
+            }
+            let np = n.div_ceil(16) * 16;
+            let mut w = vec![0f32; k * np];
+            for r in 0..n {
+                for c in 0..k {
+                    w[c * np + r] = weights[i][r * k + c];
+                }
+            }
+            let mut b = vec![0f32; np];
+            b[..n].copy_from_slice(&biases[i]);
+            let a = if i + 2 == dims.len() {
+                Act::Identity
+            } else {
+                hidden_act
+            };
+            layers.push((n, np, k, w, b, a));
+        }
+        let d = layers.iter().map(|l| l.1.max(l.2)).max().unwrap();
+        #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+        let avx512 = std::is_x86_feature_detected!("avx512f");
+        #[cfg(not(all(target_arch = "x86_64", feature = "avx512")))]
+        let avx512 = false;
+        Ok(Self {
+            layers,
+            bufs: [vec![0.0; d], vec![0.0; d]],
+            avx512,
+        })
+    }
+
+    pub fn simd(&self) -> &'static str {
+        if self.avx512 {
+            "avx512f k-major fma"
+        } else {
+            "portable k-major (autovectorized)"
+        }
+    }
+
+    /// No heap allocation.
+    pub fn forward_into(&mut self, x: &[f32], out: &mut [f32]) {
+        let [b0, b1] = &mut self.bufs;
+        let (mut cur, mut nxt) = (b0, b1);
+        cur[..x.len()].copy_from_slice(x);
+        for (n, np, k, w, b, a) in self.layers.iter() {
+            let dst = &mut nxt[..*np];
+            #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+            if self.avx512 {
+                // SAFETY: AVX-512F detected; w is [k][np], b and dst are np long, cur >= k.
+                unsafe { kmajor_avx512(w, b, &cur[..*k], dst, *np) };
+            } else {
+                kmajor_generic(w, b, &cur[..*k], dst, *np);
+            }
+            #[cfg(not(all(target_arch = "x86_64", feature = "avx512")))]
+            kmajor_generic(w, b, &cur[..*k], dst, *np);
+            for v in dst[..*n].iter_mut() {
+                *v = act(*v, *a);
+            }
+            std::mem::swap(&mut cur, &mut nxt);
+        }
+        let last = self.layers.last().unwrap().0;
+        out[..last].copy_from_slice(&cur[..last]);
+    }
+}
+
+fn kmajor_generic(w: &[f32], b: &[f32], x: &[f32], dst: &mut [f32], np: usize) {
+    dst.copy_from_slice(b);
+    for (c, &xv) in x.iter().enumerate() {
+        let row = &w[c * np..(c + 1) * np];
+        for (d, &wv) in dst.iter_mut().zip(row) {
+            *d += wv * xv;
+        }
+    }
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+#[target_feature(enable = "avx512f")]
+unsafe fn kmajor_avx512(w: &[f32], b: &[f32], x: &[f32], dst: &mut [f32], np: usize) {
+    // Blocks of 16 accumulators (256 outputs) stay in registers across the whole K loop; the
+    // block width is a const generic so the accumulator array is register-allocated.
+    let mut n0 = 0;
+    while n0 + 256 <= np {
+        kmajor_block::<16>(w, b, x, dst, np, n0);
+        n0 += 256;
+    }
+    while n0 + 64 <= np {
+        kmajor_block::<4>(w, b, x, dst, np, n0);
+        n0 += 64;
+    }
+    while n0 < np {
+        kmajor_block::<1>(w, b, x, dst, np, n0);
+        n0 += 16;
+    }
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+#[target_feature(enable = "avx512f")]
+#[inline]
+// The `avx512` feature already requires rustc >= 1.89 (see Cargo.toml).
+#[allow(clippy::incompatible_msrv)]
+unsafe fn kmajor_block<const NB: usize>(
+    w: &[f32],
+    b: &[f32],
+    x: &[f32],
+    dst: &mut [f32],
+    np: usize,
+    n0: usize,
+) {
+    use std::arch::x86_64::*;
+    let mut acc = [_mm512_setzero_ps(); NB];
+    for j in 0..NB {
+        acc[j] = _mm512_loadu_ps(b.as_ptr().add(n0 + 16 * j));
+    }
+    for (c, &xv) in x.iter().enumerate() {
+        let xb = _mm512_set1_ps(xv);
+        let row = w.as_ptr().add(c * np + n0);
+        for j in 0..NB {
+            acc[j] = _mm512_fmadd_ps(_mm512_loadu_ps(row.add(16 * j)), xb, acc[j]);
+        }
+    }
+    for j in 0..NB {
+        _mm512_storeu_ps(dst.as_mut_ptr().add(n0 + 16 * j), acc[j]);
     }
 }

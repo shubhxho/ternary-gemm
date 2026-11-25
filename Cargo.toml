@@ -111,3 +111,6 @@ required-features = ["cuda"]
 [[test]]
 name = "gpu_ext"
 required-features = ["cuda"]
+
+[[bin]]
+name = "itch"
