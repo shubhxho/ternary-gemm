@@ -62,6 +62,7 @@ All notable changes are listed here. The format follows
 * FPGA skeleton: ternary dot/MAC RTL, HLS C++ kernel, self-checking testbenches.
 * `third_party/linux` submodule (shallow, `update = none`) and `scripts/linux_tools.sh`.
 * Docs: ARCHITECTURE, LOOPED, RTX5090, ENERGY, HARDWARE, LINUX.
+* `bench/solar`: reproducible Paradigm Solar vs solc benchmark (pinned compiler and OpenZeppelin / Uniswap v3/v4 corpora), with measured median/p95 times, peak RSS, and a chart.
 
 ### Changed
 * GPU shape errors now say how to proceed (chunk batches > 16, zero-pad K, or use the CPU
@@ -69,6 +70,11 @@ All notable changes are listed here. The format follows
 
 ### Fixed
 * MSRV corrected to 1.88 (a transitive dependency of `cudarc` requires it).
+* Tensor-core path (`kernels/tensor_core.cu`) gave wrong results on real hardware (sm_120):
+  accumulator fragment order (d1/d2 swapped) in both kernels, fp16 A-fragment register order
+  (a1/a2 swapped), and warps past N returning before the cooperative activation load and
+  `__syncthreads()`. The CPU model in `src/tensor_core.rs` had the same C-fragment layout and is
+  corrected to the PTX ISA m16n8k16 table. All 85 tests pass on an RTX PRO 6000 Blackwell.
 
 ## [0.1.0] - 2026-11-22
 

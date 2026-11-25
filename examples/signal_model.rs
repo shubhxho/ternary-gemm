@@ -7,7 +7,7 @@
 //!
 //! cargo run --release --example signal_model [-- --steps 20000]
 
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{rngs::StdRng, RngExt, SeedableRng};
 use std::time::Instant;
 use ternary_gemm::gpu::Gpu;
 use ternary_gemm::mlp::{Act, CpuEngine, TernaryMlp};

@@ -110,7 +110,9 @@ extern "C" __global__ void __launch_bounds__(256)
     const int wid = threadIdx.x >> 5;
     const int warps = blockDim.x >> 5;
     const int row_base = (blockIdx.x * warps + wid) * 16;
-    if (row_base >= N) return;
+    // No early return for warps past N: every thread must take part in the cooperative
+    // xsmem load and the __syncthreads() below. Rows >= N read the all-zero weight word
+    // (tc_load_word) and the epilogue skips them.
 
     const int group = lane >> 2;     // 0..7  -> MMA row and MMA-N column
     const int tidg = lane & 3;       // 0..3  -> K nibble inside the 16-wide tile
@@ -161,15 +163,16 @@ extern "C" __global__ void __launch_bounds__(256)
 #pragma unroll
     for (int t = 0; t < 2; ++t) {
         if (t >= ntiles) continue;
-        // C fragment: (d0,d1,d2,d3) -> rows (group, group+8, group, group+8),
-        //             cols (tidg*2, tidg*2, tidg*2+1, tidg*2+1) of the 16x8 tile.
+        // C fragment (PTX ISA, mma.m16n8k16 .s32/.f32 accumulators):
+        //   (d0,d1,d2,d3) -> rows (group, group, group+8, group+8),
+        //                    cols (tidg*2, tidg*2+1, tidg*2, tidg*2+1) of the 16x8 tile.
         const int row_a = row_base + group;
         const int row_b = row_base + group + 8;
         const int col0 = t * 8 + tidg * 2;
         const int col1 = col0 + 1;
         const int vals[4] = {acc[t][0], acc[t][1], acc[t][2], acc[t][3]};
-        const int rows[4] = {row_a, row_b, row_a, row_b};
-        const int cols[4] = {col0, col0, col1, col1};
+        const int rows[4] = {row_a, row_a, row_b, row_b};
+        const int cols[4] = {col0, col1, col0, col1};
 #pragma unroll
         for (int i = 0; i < 4; ++i) {
             if (rows[i] < N && cols[i] < batch) {
@@ -192,7 +195,9 @@ extern "C" __global__ void __launch_bounds__(256)
     const int wid = threadIdx.x >> 5;
     const int warps = blockDim.x >> 5;
     const int row_base = (blockIdx.x * warps + wid) * 16;
-    if (row_base >= N) return;
+    // No early return for warps past N: every thread must take part in the cooperative
+    // xsmem load and the __syncthreads() below. Rows >= N read the all-zero weight word
+    // (tc_load_word) and the epilogue skips them.
 
     const int group = lane >> 2;
     const int tidg = lane & 3;
@@ -220,12 +225,14 @@ extern "C" __global__ void __launch_bounds__(256)
 
         const unsigned word0 = tc_load_word(w_nat, row_base + group, N, KW, kb);
         const unsigned word1 = tc_load_word(w_nat, row_base + group + 8, N, KW, kb);
-        // A fragment: 8 fp16 = 4 registers. See PTX m16n8k16.row.col.f16 layout.
-        // a0,a1: row=group,   k = tidg*2 + {0,1} and tidg*2 + 8 + {0,1}
-        // a2,a3: row=group+8, same k
+        // A fragment: 8 fp16 = 4 registers (PTX ISA, mma.m16n8k16 .f16 A layout):
+        //   a0: row=group,   k = tidg*2 + {0,1}
+        //   a1: row=group+8, k = tidg*2 + {0,1}
+        //   a2: row=group,   k = tidg*2 + 8 + {0,1}
+        //   a3: row=group+8, k = tidg*2 + 8 + {0,1}
         const unsigned a0 = tc_pack_f16_pair(word0, tidg * 2);
-        const unsigned a1 = tc_pack_f16_pair(word0, tidg * 2 + 8);
-        const unsigned a2 = tc_pack_f16_pair(word1, tidg * 2);
+        const unsigned a1 = tc_pack_f16_pair(word1, tidg * 2);
+        const unsigned a2 = tc_pack_f16_pair(word0, tidg * 2 + 8);
         const unsigned a3 = tc_pack_f16_pair(word1, tidg * 2 + 8);
 
 #pragma unroll
@@ -253,8 +260,8 @@ extern "C" __global__ void __launch_bounds__(256)
         const int col0 = t * 8 + tidg * 2;
         const int col1 = col0 + 1;
         const float vals[4] = {acc[t][0], acc[t][1], acc[t][2], acc[t][3]};
-        const int rows[4] = {row_a, row_b, row_a, row_b};
-        const int cols[4] = {col0, col0, col1, col1};
+        const int rows[4] = {row_a, row_a, row_b, row_b};
+        const int cols[4] = {col0, col1, col0, col1};
 #pragma unroll
         for (int i = 0; i < 4; ++i) {
             if (rows[i] < N && cols[i] < batch) {

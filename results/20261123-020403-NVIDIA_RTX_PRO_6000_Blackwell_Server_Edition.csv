@@ -1,0 +1,292 @@
+# measured on this GPU by src/bin/bench.rs
+# gpu,NVIDIA RTX PRO 6000 Blackwell Server Edition,sm_120,peak_gbps,1597.0
+# kernel,n,k,label,batch,kernel_name,latency_us,eff_gbps,pct_peak,speedup_vs_cublas
+# layer_stack,batch,path,layers_allocated,step_us,tokens_per_s,speedup_vs_cublas
+kernel,2560,2560,BitNet-2B q/o,1,cuBLAS FP16 (GemmEx),14.3218,915.910,57.352,1.0000
+kernel,2560,2560,BitNet-2B q/o,1,naive ternary (int8 act.),56.7423,29.190,1.828,0.2524
+kernel,2560,2560,BitNet-2B q/o,1,ternary W2A8 gemv only,4.0977,404.204,25.310,3.4950
+kernel,2560,2560,BitNet-2B q/o,1,ternary W2A8 quantize + gemv,8.1952,202.421,12.675,1.7476
+kernel,2560,2560,BitNet-2B q/o,1,ternary W2A8 fused,6.1467,269.882,16.899,2.3300
+kernel,2560,2560,BitNet-2B q/o,1,ternary W2A16 (fp16 act.),4.3108,384.820,24.096,3.3223
+kernel,2560,2560,BitNet-2B q/o,1,ternary W2A8 tensor-core,66.8128,24.790,1.552,0.2144
+kernel,2560,2560,BitNet-2B q/o,1,ternary W2A8 quantize + tensor-core,70.8998,23.398,1.465,0.2020
+kernel,2560,2560,BitNet-2B q/o,1,ternary W2A16 tensor-core,80.0255,20.729,1.298,0.1790
+kernel,2560,2560,BitNet-2B q/o,2,cuBLAS FP16 (GemmEx),16.0716,816.825,51.147,1.0000
+kernel,2560,2560,BitNet-2B q/o,2,naive ternary (int8 act.),56.5981,29.400,1.841,0.2840
+kernel,2560,2560,BitNet-2B q/o,2,ternary W2A8 gemv only,6.1413,270.951,16.966,2.6170
+kernel,2560,2560,BitNet-2B q/o,2,ternary W2A8 quantize + gemv,10.2354,163.073,10.211,1.5702
+kernel,2560,2560,BitNet-2B q/o,2,ternary W2A8 fused,8.2632,201.995,12.648,1.9450
+kernel,2560,2560,BitNet-2B q/o,2,ternary W2A16 (fp16 act.),8.1882,203.844,12.764,1.9628
+kernel,2560,2560,BitNet-2B q/o,2,ternary W2A8 tensor-core,67.1616,24.776,1.551,0.2393
+kernel,2560,2560,BitNet-2B q/o,2,ternary W2A8 quantize + tensor-core,71.2426,23.429,1.467,0.2256
+kernel,2560,2560,BitNet-2B q/o,2,ternary W2A16 tensor-core,80.1568,20.823,1.304,0.2005
+kernel,2560,2560,BitNet-2B q/o,4,cuBLAS FP16 (GemmEx),16.1043,816.438,51.123,1.0000
+kernel,2560,2560,BitNet-2B q/o,4,naive ternary (int8 act.),55.2500,30.396,1.903,0.2915
+kernel,2560,2560,BitNet-2B q/o,4,ternary W2A8 gemv only,8.1865,205.138,12.845,1.9672
+kernel,2560,2560,BitNet-2B q/o,4,ternary W2A8 quantize + gemv,12.2821,137.566,8.614,1.3112
+kernel,2560,2560,BitNet-2B q/o,4,ternary W2A8 fused,14.2303,118.733,7.435,1.1317
+kernel,2560,2560,BitNet-2B q/o,4,ternary W2A16 (fp16 act.),12.2826,137.560,8.614,1.3111
+kernel,2560,2560,BitNet-2B q/o,4,ternary W2A8 tensor-core,67.3253,24.944,1.562,0.2392
+kernel,2560,2560,BitNet-2B q/o,4,ternary W2A8 quantize + tensor-core,71.2996,23.697,1.484,0.2259
+kernel,2560,2560,BitNet-2B q/o,4,ternary W2A16 tensor-core,80.7901,20.913,1.310,0.1993
+kernel,2560,2560,BitNet-2B q/o,8,cuBLAS FP16 (GemmEx),16.2679,810.744,50.767,1.0000
+kernel,2560,2560,BitNet-2B q/o,8,naive ternary (int8 act.),55.1546,31.005,1.941,0.2950
+kernel,2560,2560,BitNet-2B q/o,8,ternary W2A8 gemv only,10.2365,167.057,10.461,1.5892
+kernel,2560,2560,BitNet-2B q/o,8,ternary W2A8 quantize + gemv,14.3304,120.762,7.562,1.1352
+kernel,2560,2560,BitNet-2B q/o,8,ternary W2A8 fused,22.5393,76.780,4.808,0.7218
+kernel,2560,2560,BitNet-2B q/o,8,ternary W2A16 (fp16 act.),20.4714,84.535,5.293,0.7947
+kernel,2560,2560,BitNet-2B q/o,8,ternary W2A8 tensor-core,67.8927,25.188,1.577,0.2396
+kernel,2560,2560,BitNet-2B q/o,8,ternary W2A8 quantize + tensor-core,71.9105,24.065,1.507,0.2262
+kernel,2560,2560,BitNet-2B q/o,8,ternary W2A16 tensor-core,81.4974,21.235,1.330,0.1996
+kernel,2560,2560,BitNet-2B q/o,16,cuBLAS FP16 (GemmEx),16.3447,811.948,50.842,1.0000
+kernel,2560,2560,BitNet-2B q/o,16,naive ternary (int8 act.),71.5935,24.744,1.549,0.2283
+kernel,2560,2560,BitNet-2B q/o,16,ternary W2A8 gemv only,14.3433,123.509,7.734,1.1395
+kernel,2560,2560,BitNet-2B q/o,16,ternary W2A8 quantize + gemv,18.4373,98.305,6.156,0.8865
+kernel,2560,2560,BitNet-2B q/o,16,ternary W2A8 fused,41.3221,43.862,2.747,0.3955
+kernel,2560,2560,BitNet-2B q/o,16,ternary W2A16 (fp16 act.),34.8332,52.033,3.258,0.4692
+kernel,2560,2560,BitNet-2B q/o,16,ternary W2A8 tensor-core,90.9828,19.471,1.219,0.1796
+kernel,2560,2560,BitNet-2B q/o,16,ternary W2A8 quantize + tensor-core,95.0716,19.064,1.194,0.1719
+kernel,2560,2560,BitNet-2B q/o,16,ternary W2A16 tensor-core,116.4905,15.559,0.974,0.1403
+kernel,640,2560,BitNet-2B k/v,1,cuBLAS FP16 (GemmEx),6.1460,534.198,33.450,1.0000
+kernel,640,2560,BitNet-2B k/v,1,naive ternary (int8 act.),53.0072,7.848,0.491,0.1159
+kernel,640,2560,BitNet-2B k/v,1,ternary W2A8 gemv only,4.0945,101.599,6.362,1.5010
+kernel,640,2560,BitNet-2B k/v,1,ternary W2A8 quantize + gemv,8.1884,51.116,3.201,0.7506
+kernel,640,2560,BitNet-2B k/v,1,ternary W2A8 fused,6.1415,68.152,4.268,1.0007
+kernel,640,2560,BitNet-2B k/v,1,ternary W2A16 (fp16 act.),4.0981,102.136,6.395,1.4997
+kernel,640,2560,BitNet-2B k/v,1,ternary W2A8 tensor-core,61.8917,6.721,0.421,0.0993
+kernel,640,2560,BitNet-2B k/v,1,ternary W2A8 quantize + tensor-core,65.9712,6.345,0.397,0.0932
+kernel,640,2560,BitNet-2B k/v,1,ternary W2A16 tensor-core,75.7699,5.524,0.346,0.0811
+kernel,640,2560,BitNet-2B k/v,2,cuBLAS FP16 (GemmEx),8.1949,401.420,25.136,1.0000
+kernel,640,2560,BitNet-2B k/v,2,naive ternary (int8 act.),53.2431,7.885,0.494,0.1539
+kernel,640,2560,BitNet-2B k/v,2,ternary W2A8 gemv only,4.5053,93.187,5.835,1.8189
+kernel,640,2560,BitNet-2B k/v,2,ternary W2A8 quantize + gemv,8.1974,51.841,3.246,0.9997
+kernel,640,2560,BitNet-2B k/v,2,ternary W2A8 fused,8.1884,51.898,3.250,1.0008
+kernel,640,2560,BitNet-2B k/v,2,ternary W2A16 (fp16 act.),8.1882,51.899,3.250,1.0008
+kernel,640,2560,BitNet-2B k/v,2,ternary W2A8 tensor-core,63.3546,6.627,0.415,0.1293
+kernel,640,2560,BitNet-2B k/v,2,ternary W2A8 quantize + tensor-core,67.4424,6.301,0.395,0.1215
+kernel,640,2560,BitNet-2B k/v,2,ternary W2A16 tensor-core,75.7901,5.607,0.351,0.1081
+kernel,640,2560,BitNet-2B k/v,4,cuBLAS FP16 (GemmEx),8.1953,402.965,25.233,1.0000
+kernel,640,2560,BitNet-2B k/v,4,naive ternary (int8 act.),53.2884,8.023,0.502,0.1538
+kernel,640,2560,BitNet-2B k/v,4,ternary W2A8 gemv only,6.1471,69.548,4.355,1.3332
+kernel,640,2560,BitNet-2B k/v,4,ternary W2A8 quantize + gemv,10.2368,42.764,2.678,0.8006
+kernel,640,2560,BitNet-2B k/v,4,ternary W2A8 fused,12.2842,35.636,2.231,0.6671
+kernel,640,2560,BitNet-2B k/v,4,ternary W2A16 (fp16 act.),10.2453,42.728,2.676,0.7999
+kernel,640,2560,BitNet-2B k/v,4,ternary W2A8 tensor-core,63.4621,6.737,0.422,0.1291
+kernel,640,2560,BitNet-2B k/v,4,ternary W2A8 quantize + tensor-core,67.5547,6.480,0.406,0.1213
+kernel,640,2560,BitNet-2B k/v,4,ternary W2A16 tensor-core,76.2081,5.744,0.360,0.1075
+kernel,640,2560,BitNet-2B k/v,8,cuBLAS FP16 (GemmEx),8.1949,406.107,25.429,1.0000
+kernel,640,2560,BitNet-2B k/v,8,naive ternary (int8 act.),53.2915,8.311,0.520,0.1538
+kernel,640,2560,BitNet-2B k/v,8,ternary W2A8 gemv only,10.2304,43.290,2.711,0.8010
+kernel,640,2560,BitNet-2B k/v,8,ternary W2A8 quantize + gemv,13.5229,34.265,2.146,0.6060
+kernel,640,2560,BitNet-2B k/v,8,ternary W2A8 fused,20.4899,22.614,1.416,0.3999
+kernel,640,2560,BitNet-2B k/v,8,ternary W2A16 (fp16 act.),18.4242,25.150,1.575,0.4448
+kernel,640,2560,BitNet-2B k/v,8,ternary W2A8 tensor-core,63.4703,6.978,0.437,0.1291
+kernel,640,2560,BitNet-2B k/v,8,ternary W2A8 quantize + tensor-core,67.5605,6.858,0.429,0.1213
+kernel,640,2560,BitNet-2B k/v,8,ternary W2A16 tensor-core,77.7923,5.956,0.373,0.1053
+kernel,640,2560,BitNet-2B k/v,16,cuBLAS FP16 (GemmEx),8.1950,412.348,25.820,1.0000
+kernel,640,2560,BitNet-2B k/v,16,naive ternary (int8 act.),53.3186,8.882,0.556,0.1537
+kernel,640,2560,BitNet-2B k/v,16,ternary W2A8 gemv only,12.2943,38.522,2.412,0.6666
+kernel,640,2560,BitNet-2B k/v,16,ternary W2A8 quantize + gemv,16.6326,30.937,1.937,0.4927
+kernel,640,2560,BitNet-2B k/v,16,ternary W2A8 fused,38.8593,13.242,0.829,0.2109
+kernel,640,2560,BitNet-2B k/v,16,ternary W2A16 (fp16 act.),32.7563,15.709,0.984,0.2502
+kernel,640,2560,BitNet-2B k/v,16,ternary W2A8 tensor-core,86.1040,5.500,0.344,0.0952
+kernel,640,2560,BitNet-2B k/v,16,ternary W2A8 quantize + tensor-core,90.1773,5.706,0.357,0.0909
+kernel,640,2560,BitNet-2B k/v,16,ternary W2A16 tensor-core,112.6067,4.570,0.286,0.0728
+kernel,6912,2560,BitNet-2B gate/up,1,cuBLAS FP16 (GemmEx),30.0536,1178.176,73.774,1.0000
+kernel,6912,2560,BitNet-2B gate/up,1,naive ternary (int8 act.),57.6880,77.446,4.849,0.5210
+kernel,6912,2560,BitNet-2B gate/up,1,ternary W2A8 gemv only,6.1465,726.875,45.515,4.8896
+kernel,6912,2560,BitNet-2B gate/up,1,ternary W2A8 quantize + gemv,10.2365,436.699,27.345,2.9359
+kernel,6912,2560,BitNet-2B gate/up,1,ternary W2A8 fused,8.2444,542.221,33.952,3.6453
+kernel,6912,2560,BitNet-2B gate/up,1,ternary W2A16 (fp16 act.),8.1883,545.936,34.185,3.6703
+kernel,6912,2560,BitNet-2B gate/up,1,ternary W2A8 tensor-core,67.7067,65.986,4.132,0.4439
+kernel,6912,2560,BitNet-2B gate/up,1,ternary W2A8 quantize + tensor-core,71.7658,62.290,3.900,0.4188
+kernel,6912,2560,BitNet-2B gate/up,1,ternary W2A16 tensor-core,81.7089,54.710,3.426,0.3678
+kernel,6912,2560,BitNet-2B gate/up,2,cuBLAS FP16 (GemmEx),28.6417,1236.913,77.452,1.0000
+kernel,6912,2560,BitNet-2B gate/up,2,naive ternary (int8 act.),57.3809,78.146,4.893,0.4992
+kernel,6912,2560,BitNet-2B gate/up,2,ternary W2A8 gemv only,7.4103,605.117,37.891,3.8651
+kernel,6912,2560,BitNet-2B gate/up,2,ternary W2A8 quantize + gemv,12.0568,372.339,23.315,2.3756
+kernel,6912,2560,BitNet-2B gate/up,2,ternary W2A8 fused,12.2806,365.553,22.890,2.3323
+kernel,6912,2560,BitNet-2B gate/up,2,ternary W2A16 (fp16 act.),10.2446,438.203,27.439,2.7958
+kernel,6912,2560,BitNet-2B gate/up,2,ternary W2A8 tensor-core,69.0074,64.980,4.069,0.4151
+kernel,6912,2560,BitNet-2B gate/up,2,ternary W2A8 quantize + tensor-core,72.9170,61.566,3.855,0.3928
+kernel,6912,2560,BitNet-2B gate/up,2,ternary W2A16 tensor-core,81.8849,54.824,3.433,0.3498
+kernel,6912,2560,BitNet-2B gate/up,4,cuBLAS FP16 (GemmEx),28.6331,1238.607,77.558,1.0000
+kernel,6912,2560,BitNet-2B gate/up,4,naive ternary (int8 act.),71.4044,63.257,3.961,0.4010
+kernel,6912,2560,BitNet-2B gate/up,4,ternary W2A8 gemv only,10.2353,441.304,27.633,2.7975
+kernel,6912,2560,BitNet-2B gate/up,4,ternary W2A8 quantize + gemv,14.3293,315.933,19.783,1.9982
+kernel,6912,2560,BitNet-2B gate/up,4,ternary W2A8 fused,16.3797,276.385,17.307,1.7481
+kernel,6912,2560,BitNet-2B gate/up,4,ternary W2A16 (fp16 act.),14.3373,315.756,19.772,1.9971
+kernel,6912,2560,BitNet-2B gate/up,4,ternary W2A8 tensor-core,69.0578,65.407,4.096,0.4146
+kernel,6912,2560,BitNet-2B gate/up,4,ternary W2A8 quantize + tensor-core,72.9892,62.024,3.884,0.3923
+kernel,6912,2560,BitNet-2B gate/up,4,ternary W2A16 tensor-core,81.9511,55.242,3.459,0.3494
+kernel,6912,2560,BitNet-2B gate/up,8,cuBLAS FP16 (GemmEx),28.6436,1240.798,77.696,1.0000
+kernel,6912,2560,BitNet-2B gate/up,8,naive ternary (int8 act.),97.7917,46.859,2.934,0.2929
+kernel,6912,2560,BitNet-2B gate/up,8,ternary W2A8 gemv only,14.3295,319.788,20.024,1.9989
+kernel,6912,2560,BitNet-2B gate/up,8,ternary W2A8 quantize + gemv,18.4261,249.802,15.642,1.5545
+kernel,6912,2560,BitNet-2B gate/up,8,ternary W2A8 fused,27.6431,166.511,10.426,1.0362
+kernel,6912,2560,BitNet-2B gate/up,8,ternary W2A16 (fp16 act.),22.5474,204.142,12.783,1.2704
+kernel,6912,2560,BitNet-2B gate/up,8,ternary W2A8 tensor-core,69.5426,65.893,4.126,0.4119
+kernel,6912,2560,BitNet-2B gate/up,8,ternary W2A8 quantize + tensor-core,73.6275,62.516,3.915,0.3890
+kernel,6912,2560,BitNet-2B gate/up,8,ternary W2A16 tensor-core,82.3848,55.870,3.498,0.3477
+kernel,6912,2560,BitNet-2B gate/up,16,cuBLAS FP16 (GemmEx),28.6539,1245.643,77.999,1.0000
+kernel,6912,2560,BitNet-2B gate/up,16,naive ternary (int8 act.),152.4956,30.909,1.935,0.1879
+kernel,6912,2560,BitNet-2B gate/up,16,ternary W2A8 gemv only,23.9670,196.665,12.315,1.1956
+kernel,6912,2560,BitNet-2B gate/up,16,ternary W2A8 quantize + gemv,27.1627,175.036,10.960,1.0549
+kernel,6912,2560,BitNet-2B gate/up,16,ternary W2A8 fused,90.0988,52.769,3.304,0.3180
+kernel,6912,2560,BitNet-2B gate/up,16,ternary W2A16 (fp16 act.),63.8572,74.454,4.662,0.4487
+kernel,6912,2560,BitNet-2B gate/up,16,ternary W2A8 tensor-core,92.2545,51.092,3.199,0.3106
+kernel,6912,2560,BitNet-2B gate/up,16,ternary W2A8 quantize + tensor-core,96.3410,49.350,3.090,0.2974
+kernel,6912,2560,BitNet-2B gate/up,16,ternary W2A16 tensor-core,118.1821,40.230,2.519,0.2425
+kernel,2560,6912,BitNet-2B down,1,cuBLAS FP16 (GemmEx),28.6815,1234.536,77.303,1.0000
+kernel,2560,6912,BitNet-2B down,1,naive ternary (int8 act.),136.5003,32.571,2.040,0.2101
+kernel,2560,6912,BitNet-2B down,1,ternary W2A8 gemv only,6.1440,723.620,45.311,4.6682
+kernel,2560,6912,BitNet-2B down,1,ternary W2A8 quantize + gemv,10.2410,434.808,27.227,2.8007
+kernel,2560,6912,BitNet-2B down,1,ternary W2A8 fused,10.2403,434.837,27.228,2.8008
+kernel,2560,6912,BitNet-2B down,1,ternary W2A16 (fp16 act.),7.3090,609.231,38.148,3.9241
+kernel,2560,6912,BitNet-2B down,1,ternary W2A8 tensor-core,175.3220,25.359,1.588,0.1636
+kernel,2560,6912,BitNet-2B down,1,ternary W2A8 quantize + tensor-core,179.2818,24.837,1.555,0.1600
+kernel,2560,6912,BitNet-2B down,1,ternary W2A16 tensor-core,212.7284,20.932,1.311,0.1348
+kernel,2560,6912,BitNet-2B down,2,cuBLAS FP16 (GemmEx),28.7823,1230.871,77.074,1.0000
+kernel,2560,6912,BitNet-2B down,2,naive ternary (int8 act.),132.7878,33.572,2.102,0.2168
+kernel,2560,6912,BitNet-2B down,2,ternary W2A8 gemv only,8.1962,543.910,34.058,3.5117
+kernel,2560,6912,BitNet-2B down,2,ternary W2A8 quantize + gemv,12.2939,363.743,22.777,2.3412
+kernel,2560,6912,BitNet-2B down,2,ternary W2A8 fused,14.4398,309.685,19.392,1.9933
+kernel,2560,6912,BitNet-2B down,2,ternary W2A16 (fp16 act.),12.8648,347.599,21.766,2.2373
+kernel,2560,6912,BitNet-2B down,2,ternary W2A8 tensor-core,176.1926,25.302,1.584,0.1634
+kernel,2560,6912,BitNet-2B down,2,ternary W2A8 quantize + tensor-core,180.2504,24.809,1.553,0.1597
+kernel,2560,6912,BitNet-2B down,2,ternary W2A16 tensor-core,214.1844,20.878,1.307,0.1344
+kernel,2560,6912,BitNet-2B down,4,cuBLAS FP16 (GemmEx),36.8945,961.259,60.192,1.0000
+kernel,2560,6912,BitNet-2B down,4,naive ternary (int8 act.),132.0964,33.930,2.125,0.2793
+kernel,2560,6912,BitNet-2B down,4,ternary W2A8 gemv only,11.2090,399.861,25.038,3.2915
+kernel,2560,6912,BitNet-2B down,4,ternary W2A8 quantize + gemv,15.7915,285.578,17.882,2.3364
+kernel,2560,6912,BitNet-2B down,4,ternary W2A8 fused,22.5423,200.055,12.527,1.6367
+kernel,2560,6912,BitNet-2B down,4,ternary W2A16 (fp16 act.),20.4867,220.128,13.784,1.8009
+kernel,2560,6912,BitNet-2B down,4,ternary W2A8 tensor-core,176.4786,25.397,1.590,0.2091
+kernel,2560,6912,BitNet-2B down,4,ternary W2A8 quantize + tensor-core,180.6745,24.960,1.563,0.2042
+kernel,2560,6912,BitNet-2B down,4,ternary W2A16 tensor-core,215.0575,20.970,1.313,0.1716
+kernel,2560,6912,BitNet-2B down,8,cuBLAS FP16 (GemmEx),36.9033,963.084,60.306,1.0000
+kernel,2560,6912,BitNet-2B down,8,naive ternary (int8 act.),133.1289,34.028,2.131,0.2772
+kernel,2560,6912,BitNet-2B down,8,ternary W2A8 gemv only,16.3922,276.362,17.305,2.2513
+kernel,2560,6912,BitNet-2B down,8,ternary W2A8 quantize + gemv,20.4849,223.847,14.017,1.8015
+kernel,2560,6912,BitNet-2B down,8,ternary W2A8 fused,39.2265,116.897,7.320,0.9408
+kernel,2560,6912,BitNet-2B down,8,ternary W2A16 (fp16 act.),34.8532,131.565,8.238,1.0588
+kernel,2560,6912,BitNet-2B down,8,ternary W2A8 tensor-core,176.9845,25.596,1.603,0.2085
+kernel,2560,6912,BitNet-2B down,8,ternary W2A8 quantize + tensor-core,181.1675,25.311,1.585,0.2037
+kernel,2560,6912,BitNet-2B down,8,ternary W2A16 tensor-core,217.3819,21.094,1.321,0.1698
+kernel,2560,6912,BitNet-2B down,16,cuBLAS FP16 (GemmEx),36.9242,966.644,60.529,1.0000
+kernel,2560,6912,BitNet-2B down,16,naive ternary (int8 act.),156.4971,29.562,1.851,0.2359
+kernel,2560,6912,BitNet-2B down,16,ternary W2A8 gemv only,22.5367,205.284,12.854,1.6384
+kernel,2560,6912,BitNet-2B down,16,ternary W2A8 quantize + gemv,27.5107,172.188,10.782,1.3422
+kernel,2560,6912,BitNet-2B down,16,ternary W2A16 (fp16 act.),65.5358,72.281,4.526,0.5634
+kernel,2560,6912,BitNet-2B down,16,ternary W2A8 tensor-core,241.2356,19.178,1.201,0.1531
+kernel,2560,6912,BitNet-2B down,16,ternary W2A8 quantize + tensor-core,245.2424,19.316,1.209,0.1506
+kernel,2560,6912,BitNet-2B down,16,ternary W2A16 tensor-core,313.8885,15.091,0.945,0.1176
+kernel,11008,4096,7B-class up,1,cuBLAS FP16 (GemmEx),63.1304,1428.912,89.475,1.0000
+kernel,11008,4096,7B-class up,1,naive ternary (int8 act.),88.8736,127.623,7.991,0.7103
+kernel,11008,4096,7B-class up,1,ternary W2A8 gemv only,10.2464,1106.963,69.315,6.1613
+kernel,11008,4096,7B-class up,1,ternary W2A8 quantize + gemv,14.3415,791.162,49.541,4.4019
+kernel,11008,4096,7B-class up,1,ternary W2A8 fused,14.3287,791.865,49.585,4.4059
+kernel,11008,4096,7B-class up,1,ternary W2A16 (fp16 act.),10.9571,1035.536,64.843,5.7616
+kernel,11008,4096,7B-class up,1,ternary W2A8 tensor-core,106.5895,106.411,6.663,0.5923
+kernel,11008,4096,7B-class up,1,ternary W2A8 quantize + tensor-core,110.7134,102.485,6.417,0.5702
+kernel,11008,4096,7B-class up,1,ternary W2A16 tensor-core,127.2937,89.136,5.581,0.4959
+kernel,11008,4096,7B-class up,2,cuBLAS FP16 (GemmEx),62.3640,1446.955,90.605,1.0000
+kernel,11008,4096,7B-class up,2,naive ternary (int8 act.),85.8640,132.401,8.291,0.7263
+kernel,11008,4096,7B-class up,2,ternary W2A8 gemv only,11.6090,979.277,61.320,5.3720
+kernel,11008,4096,7B-class up,2,ternary W2A8 quantize + gemv,15.5299,732.565,45.871,4.0157
+kernel,11008,4096,7B-class up,2,ternary W2A8 fused,16.3929,693.998,43.456,3.8043
+kernel,11008,4096,7B-class up,2,ternary W2A16 (fp16 act.),14.3295,793.931,49.714,4.3521
+kernel,11008,4096,7B-class up,2,ternary W2A8 tensor-core,105.1670,108.099,6.769,0.5930
+kernel,11008,4096,7B-class up,2,ternary W2A8 quantize + tensor-core,111.3313,102.187,6.399,0.5602
+kernel,11008,4096,7B-class up,2,ternary W2A16 tensor-core,128.9009,88.259,5.527,0.4838
+kernel,11008,4096,7B-class up,4,cuBLAS FP16 (GemmEx),62.1689,1452.469,90.950,1.0000
+kernel,11008,4096,7B-class up,4,naive ternary (int8 act.),98.6282,115.795,7.251,0.6303
+kernel,11008,4096,7B-class up,4,ternary W2A8 gemv only,13.0270,876.690,54.896,4.7723
+kernel,11008,4096,7B-class up,4,ternary W2A8 quantize + gemv,16.4341,695.933,43.578,3.7829
+kernel,11008,4096,7B-class up,4,ternary W2A8 fused,22.5322,507.587,31.784,2.7591
+kernel,11008,4096,7B-class up,4,ternary W2A16 (fp16 act.),18.4310,620.534,38.856,3.3731
+kernel,11008,4096,7B-class up,4,ternary W2A8 tensor-core,105.2181,108.543,6.797,0.5909
+kernel,11008,4096,7B-class up,4,ternary W2A8 quantize + tensor-core,108.8992,105.024,6.576,0.5709
+kernel,11008,4096,7B-class up,4,ternary W2A16 tensor-core,125.3253,91.259,5.714,0.4961
+kernel,11008,4096,7B-class up,8,cuBLAS FP16 (GemmEx),63.1610,1431.568,89.641,1.0000
+kernel,11008,4096,7B-class up,8,naive ternary (int8 act.),177.0321,65.102,4.077,0.3568
+kernel,11008,4096,7B-class up,8,ternary W2A8 gemv only,18.4422,624.933,39.132,3.4248
+kernel,11008,4096,7B-class up,8,ternary W2A8 quantize + gemv,22.5310,512.976,32.121,2.8033
+kernel,11008,4096,7B-class up,8,ternary W2A8 fused,51.1878,225.794,14.139,1.2339
+kernel,11008,4096,7B-class up,8,ternary W2A16 (fp16 act.),39.4700,292.827,18.336,1.6002
+kernel,11008,4096,7B-class up,8,ternary W2A8 tensor-core,104.5952,110.188,6.900,0.6039
+kernel,11008,4096,7B-class up,8,ternary W2A8 quantize + tensor-core,109.2719,105.772,6.623,0.5780
+kernel,11008,4096,7B-class up,8,ternary W2A16 tensor-core,127.0514,90.970,5.696,0.4971
+kernel,11008,4096,7B-class up,16,cuBLAS FP16 (GemmEx),63.4359,1429.173,89.491,1.0000
+kernel,11008,4096,7B-class up,16,naive ternary (int8 act.),490.1120,23.941,1.499,0.1294
+kernel,11008,4096,7B-class up,16,ternary W2A8 gemv only,30.7298,381.845,23.910,2.0643
+kernel,11008,4096,7B-class up,16,ternary W2A8 quantize + gemv,34.8193,338.880,21.220,1.8219
+kernel,11008,4096,7B-class up,16,ternary W2A8 fused,194.6526,60.619,3.796,0.3259
+kernel,11008,4096,7B-class up,16,ternary W2A16 (fp16 act.),67.5730,174.619,10.934,0.9388
+kernel,11008,4096,7B-class up,16,ternary W2A8 tensor-core,139.3406,84.211,5.273,0.4553
+kernel,11008,4096,7B-class up,16,ternary W2A8 quantize + tensor-core,145.0667,81.339,5.093,0.4373
+kernel,11008,4096,7B-class up,16,ternary W2A16 tensor-core,184.1318,64.082,4.013,0.3445
+kernel,4096,11008,7B-class down,1,cuBLAS FP16 (GemmEx),65.5278,1376.633,86.201,1.0000
+kernel,4096,11008,7B-class down,1,naive ternary (int8 act.),204.5249,55.288,3.462,0.3204
+kernel,4096,11008,7B-class down,1,ternary W2A8 gemv only,10.2460,1103.626,69.106,6.3954
+kernel,4096,11008,7B-class down,1,ternary W2A8 quantize + gemv,14.3456,789.005,49.405,4.5678
+kernel,4096,11008,7B-class down,1,ternary W2A8 fused,16.6946,677.989,42.454,3.9251
+kernel,4096,11008,7B-class down,1,ternary W2A16 (fp16 act.),11.9773,945.019,59.175,5.4710
+kernel,4096,11008,7B-class down,1,ternary W2A8 tensor-core,274.2530,41.231,2.582,0.2389
+kernel,4096,11008,7B-class down,1,ternary W2A8 quantize + tensor-core,278.3998,40.657,2.546,0.2354
+kernel,4096,11008,7B-class down,1,ternary W2A16 tensor-core,335.9131,33.696,2.110,0.1951
+kernel,4096,11008,7B-class down,2,cuBLAS FP16 (GemmEx),65.3513,1380.813,86.463,1.0000
+kernel,4096,11008,7B-class down,2,naive ternary (int8 act.),198.6868,57.009,3.570,0.3289
+kernel,4096,11008,7B-class down,2,ternary W2A8 gemv only,12.2828,922.179,57.744,5.3205
+kernel,4096,11008,7B-class down,2,ternary W2A8 quantize + gemv,16.3922,692.340,43.353,3.9867
+kernel,4096,11008,7B-class down,2,ternary W2A8 fused,22.5369,503.573,31.532,2.8997
+kernel,4096,11008,7B-class down,2,ternary W2A16 (fp16 act.),18.4413,615.411,38.535,3.5437
+kernel,4096,11008,7B-class down,2,ternary W2A8 tensor-core,271.3005,41.751,2.614,0.2409
+kernel,4096,11008,7B-class down,2,ternary W2A8 quantize + tensor-core,277.7358,40.863,2.559,0.2353
+kernel,4096,11008,7B-class down,2,ternary W2A16 tensor-core,337.5192,33.625,2.105,0.1936
+kernel,4096,11008,7B-class down,4,cuBLAS FP16 (GemmEx),70.4452,1281.824,80.264,1.0000
+kernel,4096,11008,7B-class down,4,naive ternary (int8 act.),195.3784,58.171,3.643,0.3606
+kernel,4096,11008,7B-class down,4,ternary W2A8 gemv only,15.6660,725.478,45.428,4.4967
+kernel,4096,11008,7B-class down,4,ternary W2A8 quantize + gemv,20.4762,557.204,34.891,3.4404
+kernel,4096,11008,7B-class down,4,ternary W2A8 fused,38.0842,299.584,18.759,1.8497
+kernel,4096,11008,7B-class down,4,ternary W2A16 (fp16 act.),28.9452,394.173,24.682,2.4337
+kernel,4096,11008,7B-class down,4,ternary W2A8 tensor-core,275.5709,41.243,2.583,0.2556
+kernel,4096,11008,7B-class down,4,ternary W2A8 quantize + tensor-core,280.9760,40.606,2.543,0.2507
+kernel,4096,11008,7B-class down,4,ternary W2A16 tensor-core,339.7535,33.581,2.103,0.2073
+kernel,4096,11008,7B-class down,8,cuBLAS FP16 (GemmEx),70.4692,1283.103,80.345,1.0000
+kernel,4096,11008,7B-class down,8,naive ternary (int8 act.),225.5552,50.729,3.177,0.3124
+kernel,4096,11008,7B-class down,8,ternary W2A8 gemv only,22.5186,508.121,31.817,3.1294
+kernel,4096,11008,7B-class down,8,ternary W2A8 quantize + gemv,26.6170,433.191,27.125,2.6475
+kernel,4096,11008,7B-class down,8,ternary W2A8 fused,110.7266,104.132,6.521,0.6364
+kernel,4096,11008,7B-class down,8,ternary W2A16 (fp16 act.),53.0067,217.524,13.621,1.3294
+kernel,4096,11008,7B-class down,8,ternary W2A8 tensor-core,278.6868,41.057,2.571,0.2529
+kernel,4096,11008,7B-class down,8,ternary W2A8 quantize + tensor-core,283.3602,40.691,2.548,0.2487
+kernel,4096,11008,7B-class down,8,ternary W2A16 tensor-core,342.8672,33.629,2.106,0.2055
+kernel,4096,11008,7B-class down,16,cuBLAS FP16 (GemmEx),70.2885,1289.839,80.766,1.0000
+kernel,4096,11008,7B-class down,16,naive ternary (int8 act.),299.0122,38.780,2.428,0.2351
+kernel,4096,11008,7B-class down,16,ternary W2A8 gemv only,34.7972,333.239,20.867,2.0199
+kernel,4096,11008,7B-class down,16,ternary W2A8 quantize + gemv,38.8977,302.638,18.950,1.8070
+kernel,4096,11008,7B-class down,16,ternary W2A16 (fp16 act.),98.2215,119.851,7.505,0.7156
+kernel,4096,11008,7B-class down,16,ternary W2A8 tensor-core,379.4775,30.557,1.913,0.1852
+kernel,4096,11008,7B-class down,16,ternary W2A8 quantize + tensor-core,383.9133,30.663,1.920,0.1831
+kernel,4096,11008,7B-class down,16,ternary W2A16 tensor-core,496.0575,23.731,1.486,0.1417
+layer_stack,1,cuBLAS FP16,30,3804.816,262.825,1.0000
+layer_stack,1,cuBLAS FP16 + CUDA graph,30,3462.156,288.837,1.0990
+layer_stack,1,ternary W2A8,30,1536.197,650.958,2.4768
+layer_stack,1,ternary W2A8 + CUDA graph,30,1014.021,986.173,3.7522
+layer_stack,2,cuBLAS FP16,30,4017.991,497.761,1.0000
+layer_stack,2,cuBLAS FP16 + CUDA graph,30,3573.108,559.737,1.1245
+layer_stack,2,ternary W2A8,30,2025.504,987.409,1.9837
+layer_stack,2,ternary W2A8 + CUDA graph,30,1391.477,1437.322,2.8876
+layer_stack,4,cuBLAS FP16,30,4273.373,936.029,1.0000
+layer_stack,4,cuBLAS FP16 + CUDA graph,30,3824.710,1045.831,1.1173
+layer_stack,4,ternary W2A8,30,2475.760,1615.666,1.7261
+layer_stack,4,ternary W2A8 + CUDA graph,30,1922.318,2080.821,2.2230
+layer_stack,8,cuBLAS FP16,30,4281.163,1868.651,1.0000
+layer_stack,8,cuBLAS FP16 + CUDA graph,30,3835.091,2086.000,1.1163
+layer_stack,8,ternary W2A8,30,3316.461,2412.210,1.2909
+layer_stack,8,ternary W2A8 + CUDA graph,30,2651.641,3017.000,1.6145
+layer_stack,16,cuBLAS FP16,30,4290.621,3729.064,1.0000
+layer_stack,16,cuBLAS FP16 + CUDA graph,30,3862.262,4142.650,1.1109
+layer_stack,16,ternary W2A8,30,4536.160,3527.212,0.9459
+layer_stack,16,ternary W2A8 + CUDA graph,30,4037.671,3962.680,1.0626

@@ -19,7 +19,7 @@
 //! `--energy` also measures energy per inference for the CPU paths with RAPL (and NVML with the
 //! `nvml` feature); it prints "unavailable" when the host exposes no counters.
 
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{rngs::StdRng, RngExt, SeedableRng};
 use std::cell::RefCell;
 use std::time::Instant;
 use ternary_gemm::gpu::Gpu;

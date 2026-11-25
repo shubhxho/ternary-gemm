@@ -32,6 +32,7 @@ Fused **ternary matmul kernels for LLM decode on NVIDIA GPUs**, written in Rust 
 | Results | schema-versioned JSON results, `scripts/compare_results.py` regression check | [results-schema.json](docs/results-schema.json) |
 | Quality | proptest, cargo-fuzz targets, criterion benches, CI (fmt, clippy matrix, Linux/macOS tests, MSRV 1.88, rustdoc, NVRTC sm_80..sm_120, cargo-deny, ruff, hardware, Python, package) | [CONTRIBUTING](CONTRIBUTING.md) |
 | Kernel tooling | `third_party/linux` submodule (shallow, not fetched by default) for perf / turbostat / RAPL work | [LINUX](docs/LINUX.md) |
+| Solidity compiler bench | Reproducible Solar vs solc parse / lowering / full-compile times and peak RSS on pinned OpenZeppelin and Uniswap v3/v4 corpora | [bench/solar](bench/solar/README.md) |
 
 ### Languages
 

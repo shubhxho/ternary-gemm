@@ -501,7 +501,7 @@ unsafe fn epilogue_avx512(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::{rngs::StdRng, Rng, SeedableRng};
+    use rand::{rngs::StdRng, RngExt, SeedableRng};
 
     #[test]
     fn packed_gemv_matches_naive() {

@@ -11,7 +11,7 @@
 //! in the same order (`__fdiv_rn`, `__fmul_rn`, `__fadd_rn`, `rintf`).
 
 use crate::pack::quantize_absmean;
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{rngs::StdRng, RngExt, SeedableRng};
 
 /// Largest layer width the single-block GPU kernel supports (shared-memory resident activations).
 pub const MLP_MAX_DIM: usize = 4096;

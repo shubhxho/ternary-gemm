@@ -1,7 +1,7 @@
 //! Signal-model (small ternary MLP) correctness on the CPU: the SIMD engine and a lane-level
 //! transliteration of the `ternary_mlp` CUDA kernel must match the scalar reference bit for bit.
 
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{rngs::StdRng, RngExt, SeedableRng};
 use ternary_gemm::mlp::{quantize_into, Act, CpuEngine, DenseF32Mlp, MlpLayer, TernaryMlp};
 
 const MODELS: &[&[usize]] = &[
