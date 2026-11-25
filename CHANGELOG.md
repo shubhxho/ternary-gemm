@@ -7,6 +7,15 @@ All notable changes are listed here. The format follows
 ## [Unreleased]
 
 ### Added
+* Improved ITCH training recipe (`scripts/itch_train.py --recipe improved`, the new default):
+  all 3.61M labelled train samples, AdamW, cosine LR, and QAT logit distillation from the
+  frozen dense teacher. Same official split, features and `[64, 256, 256, 1]` architecture as
+  `results/itch-20261125/`. Rust-scored official test: QAT AUC 0.7124 vs the previous 0.7137
+  (no improvement), PTQ 0.6763 → 0.6883, QAT 1 s Pearson IC 0.2045 → 0.2083, sign agreement
+  with dense 0.8671 → 0.9231. `--recipe legacy` reproduces the original run. Walk-forward expanding-window folds (`--walk-forward`) on the same day: QAT mean AUC 0.7124 ± 0.0130 (four folds; not independent).
+  Unit tests: `python3 scripts/test_itch_train.py`. Results: `results/itch-20261125-distill/`,
+  `docs/ITCH_REPLAY.md`.
+
 * `cpu_lanes::PackedLanes`: rows-in-lanes 2-bit GEMV for AVX-512 VNNI with GFNI (or VBMI)
   decode, a fused bit-exact dequant/bias/ReLU epilogue that also returns `max|out|`, and a
   threaded path on `SpinPool`. Default `CpuEngine` batch-1 path on AVX-512; `with_row_packed()`

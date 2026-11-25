@@ -1,0 +1,151 @@
+{
+ "dims": [
+  64,
+  256,
+  256,
+  1
+ ],
+ "recipe": "improved",
+ "max_train": 0,
+ "epochs": 8,
+ "qat_epochs": 6,
+ "lr": 0.0002,
+ "qat_lr": 0.00015,
+ "weight_decay": 0.0001,
+ "cosine": true,
+ "distill": 0.5,
+ "seed": 0,
+ "splits": {
+  "train": 3612183,
+  "val": 569890,
+  "test": 2671033
+ },
+ "protocol": {
+  "split": "train 09:30-12:30, val 12:35-13:30, test 13:35-16:00 ET, 5-minute embargo, no label leakage",
+  "target": "direction of the next mid-price change",
+  "features": "same 64-dim snapshots as PR #11 / results/itch-20261125",
+  "architecture": "[64, 256, 256, 1] ReLU",
+  "selection": "validation AUC only; test scored once at the end"
+ },
+ "previous_official_test": {
+  "dense": 0.7094,
+  "ternary_qat": 0.7137,
+  "ternary_ptq": 0.6763,
+  "imbalance": 0.6721,
+  "source": "results/itch-20261125/quality.md (Rust replay preds, same split)"
+ },
+ "tag": "official",
+ "n_train_used": 3612183,
+ "n_val": 569890,
+ "n_test": 2671033,
+ "dense_best_epoch": 1,
+ "dense_val_auc": 0.7060677125006105,
+ "qat_best_epoch": 3,
+ "qat_val_auc": 0.7111204283818628,
+ "dense_test_auc": 0.7064247945126373,
+ "qat_test_auc": 0.7123678957051578,
+ "ptq_test_auc": 0.6883432690991497,
+ "imbalance_test_auc": 0.672090766564931,
+ "dense_test_bce": 0.6430754661560059,
+ "qat_test_bce": 0.6282445788383484,
+ "log": [
+  {
+   "qat": false,
+   "epoch": 0,
+   "val_auc": 0.7051354665549153,
+   "val_bce": 0.6247374415397644,
+   "s": 16.462082386016846
+  },
+  {
+   "qat": false,
+   "epoch": 1,
+   "val_auc": 0.7060677125006105,
+   "val_bce": 0.6264457702636719,
+   "s": 16.32694721221924
+  },
+  {
+   "qat": false,
+   "epoch": 2,
+   "val_auc": 0.6996308690737609,
+   "val_bce": 0.6337723135948181,
+   "s": 16.15815234184265
+  },
+  {
+   "qat": false,
+   "epoch": 3,
+   "val_auc": 0.7006196036596843,
+   "val_bce": 0.6301916837692261,
+   "s": 15.45177960395813
+  },
+  {
+   "qat": false,
+   "epoch": 4,
+   "val_auc": 0.6977992348913613,
+   "val_bce": 0.6336753368377686,
+   "s": 14.368727207183838
+  },
+  {
+   "qat": false,
+   "epoch": 5,
+   "val_auc": 0.6968819857017835,
+   "val_bce": 0.6380487680435181,
+   "s": 14.506350040435791
+  },
+  {
+   "qat": false,
+   "epoch": 6,
+   "val_auc": 0.6955886620828248,
+   "val_bce": 0.6391620635986328,
+   "s": 14.409873962402344
+  },
+  {
+   "qat": false,
+   "epoch": 7,
+   "val_auc": 0.6952020755105859,
+   "val_bce": 0.6396689414978027,
+   "s": 11.891332149505615
+  },
+  {
+   "qat": true,
+   "epoch": 0,
+   "val_auc": 0.706594615109032,
+   "val_bce": 0.6266239285469055,
+   "s": 19.34449052810669
+  },
+  {
+   "qat": true,
+   "epoch": 1,
+   "val_auc": 0.7079769503401017,
+   "val_bce": 0.6236335039138794,
+   "s": 19.71042275428772
+  },
+  {
+   "qat": true,
+   "epoch": 2,
+   "val_auc": 0.706916299817803,
+   "val_bce": 0.6273529529571533,
+   "s": 20.663874626159668
+  },
+  {
+   "qat": true,
+   "epoch": 3,
+   "val_auc": 0.7111204283818628,
+   "val_bce": 0.618511438369751,
+   "s": 20.199945211410522
+  },
+  {
+   "qat": true,
+   "epoch": 4,
+   "val_auc": 0.7088214747408127,
+   "val_bce": 0.6226939558982849,
+   "s": 19.619555473327637
+  },
+  {
+   "qat": true,
+   "epoch": 5,
+   "val_auc": 0.7069915396521256,
+   "val_bce": 0.6247239112854004,
+   "s": 22.12252688407898
+  }
+ ]
+}
