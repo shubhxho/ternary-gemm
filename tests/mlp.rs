@@ -87,6 +87,8 @@ fn cpu_engine_and_kernel_emulation_are_bit_exact() {
             let m = TernaryMlp::random(dims, a, 100 + mi as u64).unwrap();
             let mut eng = CpuEngine::new(&m).unwrap();
             let mut bytes = CpuEngine::new(&m).unwrap().without_packed();
+            let mut rows = CpuEngine::new(&m).unwrap().with_row_packed();
+            let mut threaded = CpuEngine::new(&m).unwrap().with_threads(3);
             let mut out = vec![0f32; m.out_dim()];
             for x in inputs(&mut rng, m.in_dim()) {
                 let r = m.forward_reference(&x);
@@ -94,6 +96,10 @@ fn cpu_engine_and_kernel_emulation_are_bit_exact() {
                 assert_eq!(bits(&r), bits(&out), "CpuEngine {dims:?} {a:?}");
                 bytes.forward_into(&x, &mut out);
                 assert_eq!(bits(&r), bits(&out), "CpuEngine byte codes {dims:?} {a:?}");
+                rows.forward_into(&x, &mut out);
+                assert_eq!(bits(&r), bits(&out), "CpuEngine row packed2 {dims:?} {a:?}");
+                threaded.forward_into(&x, &mut out);
+                assert_eq!(bits(&r), bits(&out), "CpuEngine 3 threads {dims:?} {a:?}");
                 assert_eq!(
                     bits(&r),
                     bits(&emulate_kernel(&m, &x)),
@@ -153,7 +159,9 @@ fn engine_reports_simd_path() {
             "avx2",
             "avx512-vnni",
             "avx512-vnni-vbmi packed2",
-            "avx2 packed2"
+            "avx2 packed2",
+            "avx512-vnni-gfni lanes",
+            "avx512-vnni-vbmi lanes"
         ]
         .contains(&s),
         "{s}"

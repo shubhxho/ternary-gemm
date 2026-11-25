@@ -93,6 +93,11 @@ pub struct TernaryMlp {
 /// bit-identical to [`quantize_scalar`], which the reference forward pass uses as the oracle.
 pub fn quantize_into(x: &[f32], q: &mut [i8]) -> (f32, i32) {
     assert!(q.len() >= x.len(), "q too short");
+    #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+    if crate::cpu_lanes::available() {
+        // SAFETY: AVX-512F/BW detected; lengths checked above.
+        return unsafe { quantize_avx512(x, q, None) };
+    }
     #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
     if std::is_x86_feature_detected!("avx2") {
         // SAFETY: AVX2 detected; lengths checked above.
@@ -104,6 +109,73 @@ pub fn quantize_into(x: &[f32], q: &mut [i8]) -> (f32, i32) {
         return unsafe { quantize_sse41(x, q) };
     }
     quantize_generic(x, q)
+}
+
+/// [`quantize_into`] when `max_abs = max_i |x[i]|` is already known (the fused layer kernels
+/// compute it in their epilogue), saving the max pass. Bit-identical to [`quantize_scalar`] for
+/// finite inputs.
+pub fn quantize_with_max(x: &[f32], q: &mut [i8], max_abs: f32) -> (f32, i32) {
+    assert!(q.len() >= x.len(), "q too short");
+    #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+    if crate::cpu_lanes::available() {
+        // SAFETY: AVX-512F/BW detected; lengths checked above.
+        return unsafe { quantize_avx512(x, q, Some(max_abs)) };
+    }
+    let s = 127.0f32 / max_abs.max(1e-5);
+    let mut sum = 0i32;
+    for (d, &v) in q.iter_mut().zip(x) {
+        let t = (v * s).round_ties_even().clamp(-128.0, 127.0) as i32;
+        sum += t;
+        *d = t as i8;
+    }
+    (s, sum)
+}
+
+/// 16-lane quantizer: same operations as the scalar oracle (`vrndscaleps` nearest-even, clamp,
+/// exact int conversion); the narrowing `vpmovdb` cannot saturate after the clamp.
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+#[target_feature(enable = "avx512f,avx512bw")]
+#[clippy::msrv = "1.89"]
+unsafe fn quantize_avx512(x: &[f32], q: &mut [i8], max_abs: Option<f32>) -> (f32, i32) {
+    use std::arch::x86_64::*;
+    let n = x.len();
+    let p = x.as_ptr();
+    let mask = |i: usize| -> u16 {
+        if n - i >= 16 {
+            u16::MAX
+        } else {
+            (1u16 << (n - i)) - 1
+        }
+    };
+    let m = match max_abs {
+        Some(m) => m,
+        None => {
+            let mut mv = _mm512_setzero_ps();
+            let mut i = 0;
+            while i < n {
+                mv = _mm512_max_ps(mv, _mm512_abs_ps(_mm512_maskz_loadu_ps(mask(i), p.add(i))));
+                i += 16;
+            }
+            _mm512_reduce_max_ps(mv)
+        }
+    };
+    let s = 127.0f32 / m.max(1e-5);
+    let sv = _mm512_set1_ps(s);
+    let (lo, hi) = (_mm512_set1_ps(-128.0), _mm512_set1_ps(127.0));
+    let mut sum = _mm512_setzero_si512();
+    let qp = q.as_mut_ptr();
+    let mut i = 0;
+    while i < n {
+        let k = mask(i);
+        let t = _mm512_roundscale_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(
+            _mm512_mul_ps(_mm512_maskz_loadu_ps(k, p.add(i)), sv),
+        );
+        let v = _mm512_cvtps_epi32(_mm512_min_ps(_mm512_max_ps(t, lo), hi));
+        sum = _mm512_mask_add_epi32(sum, k, sum, v);
+        _mm512_mask_cvtepi32_storeu_epi8(qp.add(i) as *mut _, k, v);
+        i += 16;
+    }
+    (s, _mm512_reduce_add_epi32(sum))
 }
 
 #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
@@ -571,6 +643,9 @@ pub struct CpuEngine {
     /// 2-bit packed weights decoded in registers ([`crate::cpu_packed`]), when the CPU has
     /// AVX-512 VNNI + VBMI; `None` falls back to the byte-code paths.
     packed: Option<Vec<crate::cpu_packed::Packed2>>,
+    /// Rows-in-lanes 2-bit weights ([`crate::cpu_lanes`]) with the fused dequant + absmax
+    /// epilogue: the default batch-1 path when the CPU has AVX-512 VNNI and GFNI or VBMI.
+    lanes: Option<Vec<crate::cpu_lanes::PackedLanes>>,
     /// Row sums scratch for the packed path (`n` padded to 16).
     acc: Vec<i32>,
     /// Optional spinning worker pool for the packed path ([`Self::with_threads`]).
@@ -601,6 +676,13 @@ impl CpuEngine {
                 .map(|l| crate::cpu_packed::Packed2::from_ternary(&l.w, l.n, l.k))
                 .collect::<Vec<_>>()
         });
+        let lanes = crate::cpu_lanes::available().then(|| {
+            model
+                .layers
+                .iter()
+                .map(|l| crate::cpu_lanes::PackedLanes::from_ternary(&l.w, l.n, l.k))
+                .collect::<Vec<_>>()
+        });
         let qlen = d.div_ceil(64) * 64;
         let acc_len = d.div_ceil(crate::cpu_packed::ROWS) * crate::cpu_packed::ROWS;
         Ok(Self {
@@ -611,6 +693,7 @@ impl CpuEngine {
             avx2,
             vnni,
             packed,
+            lanes,
             acc: vec![0; acc_len],
             pool: None,
         })
@@ -628,7 +711,56 @@ impl CpuEngine {
     /// benchmark one against the other; results are identical).
     pub fn without_packed(mut self) -> Self {
         self.packed = None;
+        self.lanes = None;
         self
+    }
+
+    /// Use the row-major [`Packed2`](crate::cpu_packed::Packed2) kernel (separate epilogue and
+    /// quantizer passes) instead of the default rows-in-lanes kernel. Results are identical; this
+    /// exists to benchmark one against the other.
+    pub fn with_row_packed(mut self) -> Self {
+        self.lanes = None;
+        self
+    }
+
+    fn forward_lanes(&mut self, x: &[f32], out: &mut [f32]) {
+        let lanes = self.lanes.as_ref().expect("lanes path");
+        let [b0, b1] = &mut self.bufs;
+        let (mut cur, mut nxt) = (b0, b1);
+        let nl = self.model.layers.len();
+        let mut max_abs: Option<f32> = None;
+        for (li, l) in self.model.layers.iter().enumerate() {
+            let p = &lanes[li];
+            let input: &[f32] = if li == 0 { x } else { &cur[..l.k] };
+            let (s, sum_q) = match max_abs {
+                None => quantize_into(input, &mut self.q[..l.k]),
+                // The previous layer's fused epilogue already found max |input|.
+                Some(m) => quantize_with_max(input, &mut self.q[..l.k], m),
+            };
+            let dst: &mut [f32] = if li + 1 == nl {
+                &mut *out
+            } else {
+                &mut nxt[..l.n]
+            };
+            let pool = self.pool.as_ref().filter(|pool| {
+                l.n * l.k >= crate::cpu_packed::PAR_MIN_WEIGHTS && pool.threads() > 1
+            });
+            let e = crate::cpu_lanes::Epi {
+                sum_q,
+                s,
+                scale: &l.scale,
+                bias: &l.bias,
+                act: l.act,
+            };
+            max_abs = Some(crate::cpu_lanes::layer(
+                p,
+                &self.q[..p.q_len()],
+                e,
+                dst,
+                pool,
+            ));
+            std::mem::swap(&mut cur, &mut nxt);
+        }
     }
 
     fn forward_packed(&mut self, x: &[f32], out: &mut [f32]) {
@@ -665,6 +797,9 @@ impl CpuEngine {
     pub fn forward_into(&mut self, x: &[f32], out: &mut [f32]) {
         assert_eq!(x.len(), self.model.in_dim());
         assert_eq!(out.len(), self.model.out_dim());
+        if self.lanes.is_some() {
+            return self.forward_lanes(x, out);
+        }
         if self.packed.is_some() {
             return self.forward_packed(x, out);
         }
@@ -723,6 +858,9 @@ impl CpuEngine {
 
     /// The SIMD path this engine dispatches to on this CPU.
     pub fn simd(&self) -> &'static str {
+        if self.lanes.is_some() {
+            return crate::cpu_lanes::level();
+        }
         if self.packed.is_some() {
             if crate::cpu_packed::available() {
                 "avx512-vnni-vbmi packed2"
