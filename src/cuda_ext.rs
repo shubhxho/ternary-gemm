@@ -323,7 +323,7 @@ pub fn warpspec_smem_bytes(k: usize) -> usize {
 mod tests {
     use super::*;
     use crate::reference::{gemm_i8, quantize_acts};
-    use rand::{rngs::StdRng, Rng, SeedableRng};
+    use rand::{rngs::StdRng, RngExt, SeedableRng};
 
     fn case(n: usize, k: usize, seed: u64) -> (PackedTernary, QuantizedActs, Vec<f16>) {
         let mut rng = StdRng::seed_from_u64(seed);
