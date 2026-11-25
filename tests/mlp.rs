@@ -183,3 +183,39 @@ fn simd_quantize_matches_scalar_oracle() {
         assert_eq!(a, b);
     }
 }
+
+#[test]
+fn dense_kmajor_matches_row_major_dense() {
+    use rand::{rngs::StdRng, RngExt, SeedableRng};
+    use ternary_gemm::mlp::{Act, DenseF32KMajor, DenseF32Mlp};
+    let mut rng = StdRng::seed_from_u64(11);
+    for dims in [vec![64usize, 256, 256, 1], vec![32, 48, 16, 3]] {
+        let ws: Vec<Vec<f32>> = (0..dims.len() - 1)
+            .map(|i| {
+                (0..dims[i] * dims[i + 1])
+                    .map(|_| rng.random_range(-0.2f32..0.2))
+                    .collect()
+            })
+            .collect();
+        let bs: Vec<Vec<f32>> = (1..dims.len())
+            .map(|i| {
+                (0..dims[i])
+                    .map(|_| rng.random_range(-0.1f32..0.1))
+                    .collect()
+            })
+            .collect();
+        let mut a = DenseF32Mlp::from_f32(&dims, &ws, &bs, Act::Relu).unwrap();
+        let mut b = DenseF32KMajor::from_f32(&dims, &ws, &bs, Act::Relu).unwrap();
+        let x: Vec<f32> = (0..dims[0]).map(|_| rng.random_range(-1f32..1.0)).collect();
+        let out = *dims.last().unwrap();
+        let (mut ya, mut yb) = (vec![0f32; out], vec![0f32; out]);
+        a.forward_into(&x, &mut ya);
+        b.forward_into(&x, &mut yb);
+        for (p, q) in ya.iter().zip(&yb) {
+            assert!(
+                (p - q).abs() <= 1e-4 * (1.0 + p.abs()),
+                "{p} vs {q} for {dims:?}"
+            );
+        }
+    }
+}

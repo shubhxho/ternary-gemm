@@ -10,6 +10,7 @@
 //! * [`cpu`]: CPU W2A8 GEMM backend (no-GPU fallback, any batch, threaded), bit-exact.
 //! * [`energy`]: measured energy via RAPL (CPU) and NVML (GPU, feature `nvml`), per-inference joules.
 //! * [`format`](mod@format): the `.tgm` container for converted ternary models.
+//! * [`itch`]: Nasdaq TotalView-ITCH 5.0 parser, order book and top-of-book features (replay workload).
 //! * [`looped`]: a weight-shared, recurrent-depth ternary transformer (CPU + GPU backends).
 //! * [`mlp`]: small ternary MLPs (signal models): CPU reference, allocation-free SIMD CPU engine.
 //! * [`results`]: environment capture + JSON writer for benchmark results (`docs/results-schema.json`).
@@ -32,6 +33,7 @@ pub mod energy;
 pub mod format;
 #[cfg(feature = "cuda")]
 pub mod gpu;
+pub mod itch;
 pub mod looped;
 pub mod mlp;
 pub mod pack;

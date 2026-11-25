@@ -130,6 +130,8 @@ Each call checks every buffer length and shape before launching, so bad input re
 
 ## For quant / HFT: small signal models at batch 1
 
+**Real market data:** [docs/ITCH_REPLAY.md](docs/ITCH_REPLAY.md) replays a public Nasdaq ITCH day (5 symbols, 7.2M messages), rebuilds the book and scores every update with a trained 64-256-256-1 order-book model. Measured on one CPU core: ternary (QAT) keeps the dense model's held-out AUC (0.714 vs 0.709), and message-to-decision p50 is 1.5 µs vs 3.9–4.6 µs for dense f32. GPU replay is scripted but not yet measured.
+
 The LLM kernels above are built for throughput on big matrices. A trading model is the opposite case: a few hundred features, a few small layers, one request at a time, where **p99 and max latency matter more than throughput**. This path is built for that case.
 
 ```rust
