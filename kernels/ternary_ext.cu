@@ -21,6 +21,11 @@
 //   tgx_gemv_lut               T-MAC style table lookup (2 weights -> one 16-entry table index).
 //   tgx_gemv_warpspec          1 producer warp (cp.async) + 4 consumer warps (dp4a), named-barrier
 //                              ring; the pre-Hopper warp-specialization pattern.
+//   tgx_gemv_batched           W2A8 GEMV for batch 1..16: one K-chunk of weights is reused across
+//                              the batch (tiled decode). Same int32 + epilogue contract, residual
+//                              and output are [batch][N].
+//   tgx_gemv_bulk_r2           Same math as tgx_gemv_cpasync_r2, but weight chunks are prefetched
+//                              with cp.async.bulk (TMA-style, sm_90+) or cp.async 16B (sm_80/86/89).
 
 typedef unsigned short half_t;
 
@@ -384,6 +389,171 @@ extern "C" __global__ void __launch_bounds__(TGX_WS_THREADS)
                 const int row = rowb + r0 + r;
                 if (row < N) tgx_epilogue(acc[r], xsum[0], xs[0], wscale[row], act, residual, out, row);
             }
+        }
+    }
+}
+
+// =================================================================================================
+// 5. Batched W2A8 GEMV (decode with batch 1..TGX_BAT_MAX). grid = ceil(N / (warps * R)).
+//    One K-chunk of each warp's rows is staged and reused across the batch, so weight bytes are
+//    amortized when B > 1. Activations for the current chunk, all B tokens, live in smem
+//    (B * 2048 B). Residual and output are laid out [batch][N].
+//    Dynamic smem: batch * 2048 + TGX_BAT_WARPS * TGX_BAT_STAGES * TGX_BAT_R * 512.
+// =================================================================================================
+#define TGX_BAT_WARPS 4
+#define TGX_BAT_R 2
+#define TGX_BAT_STAGES 2
+#define TGX_BAT_MAX 16
+
+extern "C" __global__ void __launch_bounds__(TGX_BAT_WARPS * 32, 1)
+    tgx_gemv_batched(const unsigned* __restrict__ w, const float* __restrict__ wscale,
+                     const signed char* __restrict__ xq, const float* __restrict__ xs,
+                     const int* __restrict__ xsum, const half_t* __restrict__ residual,
+                     half_t* __restrict__ out, int N, int K, int batch, int act) {
+    signed char* x_s = reinterpret_cast<signed char*>(tgx_smem);
+    const int lane = threadIdx.x & 31, warp = threadIdx.x >> 5;
+    const int B = batch;
+    uint4* ring = reinterpret_cast<uint4*>(x_s + (size_t)B * (TGX_CHUNK_WORDS * 16))
+                + (size_t)warp * TGX_BAT_STAGES * TGX_BAT_R * 32;
+    const int KW = K >> 4;
+    const int chunks = (KW + TGX_CHUNK_WORDS - 1) / TGX_CHUNK_WORDS;
+    const int row0 = (blockIdx.x * TGX_BAT_WARPS + warp) * TGX_BAT_R;
+
+    int acc[TGX_BAT_R][TGX_BAT_MAX];
+#pragma unroll
+    for (int r = 0; r < TGX_BAT_R; ++r)
+#pragma unroll
+        for (int b = 0; b < TGX_BAT_MAX; ++b) acc[r][b] = 0;
+
+    for (int c = 0; c < chunks; ++c) {
+        const int base = c * TGX_CHUNK_WORDS;
+        const int L = min(TGX_CHUNK_WORDS, KW - base) >> 2;
+        const int k_elems = L << 6;  // L * 16 activations
+        // Stage this chunk of every token's activations. xq is [batch][K].
+        for (int b = 0; b < B; ++b) {
+            const signed char* src = xq + (size_t)b * K + (base << 4);
+            signed char* dst = x_s + (size_t)b * (TGX_CHUNK_WORDS * 16);
+            for (int i = threadIdx.x; i < (k_elems >> 4); i += blockDim.x) tgx_cp_async16(dst + 16 * i, src + 16 * i);
+        }
+        // Stage this warp's R rows of weights into the ring slot (lane's own uint4).
+        if (lane < L) {
+#pragma unroll
+            for (int r = 0; r < TGX_BAT_R; ++r) {
+                const int row = min(row0 + r, N - 1);
+                tgx_cp_async16(&ring[((c % TGX_BAT_STAGES) * TGX_BAT_R + r) * 32 + lane],
+                               reinterpret_cast<const uint4*>(w + (size_t)row * KW + base) + lane);
+            }
+        }
+        tgx_cp_commit();
+        tgx_cp_wait<0>();
+        __syncthreads();
+        if (lane < L) {
+#pragma unroll
+            for (int r = 0; r < TGX_BAT_R; ++r) {
+                const uint4 wv = ring[((c % TGX_BAT_STAGES) * TGX_BAT_R + r) * 32 + lane];
+                for (int b = 0; b < B; ++b) {
+                    // chunk_dot sees a base of 0 because this token's chunk starts at dst+0.
+                    acc[r][b] = tgx_chunk_dot(wv, x_s + (size_t)b * (TGX_CHUNK_WORDS * 16), 0, L, lane, acc[r][b]);
+                }
+            }
+        }
+        __syncthreads();
+    }
+#pragma unroll
+    for (int r = 0; r < TGX_BAT_R; ++r)
+        for (int b = 0; b < B; ++b) acc[r][b] = tgx_warp_sum(acc[r][b]);
+    if (lane == 0) {
+#pragma unroll
+        for (int r = 0; r < TGX_BAT_R; ++r) {
+            const int row = row0 + r;
+            if (row >= N) continue;
+            for (int b = 0; b < B; ++b) {
+                const int idx = b * N + row;
+                const half_t* res_b = residual ? residual + (size_t)b * N : residual;
+                tgx_epilogue(acc[r][b], xsum[b], xs[b], wscale[row], act, res_b, out + (size_t)b * N, row);
+            }
+        }
+    }
+}
+
+// =================================================================================================
+// 6. TMA-style weight prefetch (cp.async.bulk on sm_90+ / sm_100 / sm_120; cp.async 16B fallback).
+//    Same math and epilogue as tgx_gemv_cpasync_r2 (batch-1). One thread per warp issues a bulk
+//    copy of each row's 512-byte chunk; the warp then dp4a's as usual.
+// =================================================================================================
+__device__ __forceinline__ void tgx_cp_bulk_or_async(void* smem, const void* gmem, int nbytes) {
+#if __CUDA_ARCH__ >= 900
+    asm volatile("cp.async.bulk.shared::cta.global.bulk_group [%0], [%1], %2;\n" ::"r"(tgx_smem_addr(smem)),
+                 "l"(gmem), "r"(nbytes));
+#else
+    const signed char* s = reinterpret_cast<const signed char*>(gmem);
+    signed char* d = reinterpret_cast<signed char*>(smem);
+    for (int i = 0; i < nbytes; i += 16) tgx_cp_async16(d + i, s + i);
+#endif
+}
+__device__ __forceinline__ void tgx_cp_bulk_commit() {
+#if __CUDA_ARCH__ >= 900
+    asm volatile("cp.async.bulk.commit_group;\n" ::);
+#else
+    tgx_cp_commit();
+#endif
+}
+__device__ __forceinline__ void tgx_cp_bulk_wait0() {
+#if __CUDA_ARCH__ >= 900
+    asm volatile("cp.async.bulk.wait_group %0;\n" ::"n"(0));
+#else
+    tgx_cp_wait<0>();
+#endif
+}
+
+extern "C" __global__ void __launch_bounds__(TGX_CP_WARPS * 32, 1)
+    tgx_gemv_bulk_r2(const unsigned* __restrict__ w, const float* __restrict__ wscale,
+                     const signed char* __restrict__ xq, const float* __restrict__ xs,
+                     const int* __restrict__ xsum, const half_t* __restrict__ residual,
+                     half_t* __restrict__ out, int N, int K, int act) {
+    signed char* x_s = reinterpret_cast<signed char*>(tgx_smem);
+    const int lane = threadIdx.x & 31, warp = threadIdx.x >> 5;
+    uint4* ring = reinterpret_cast<uint4*>(x_s + K) + (size_t)warp * TGX_CP_STAGES * 2 * 32;
+    const int KW = K >> 4;
+    const int chunks = (KW + TGX_CHUNK_WORDS - 1) / TGX_CHUNK_WORDS;
+    const int row0 = (blockIdx.x * TGX_CP_WARPS + warp) * 2;
+
+    tgx_stage_acts(x_s, xq, K);
+    tgx_cp_commit();
+    tgx_cp_wait<0>();
+    __syncthreads();
+
+    int acc[2] = {0, 0};
+    for (int c = 0; c < chunks; ++c) {
+        const int base = c * TGX_CHUNK_WORDS;
+        const int L = min(TGX_CHUNK_WORDS, KW - base) >> 2;
+        const int bytes = L << 4;  // L uint4s = L * 16 bytes
+        if (lane == 0) {
+#pragma unroll
+            for (int r = 0; r < 2; ++r) {
+                const int row = min(row0 + r, N - 1);
+                tgx_cp_bulk_or_async(&ring[((c % TGX_CP_STAGES) * 2 + r) * 32],
+                                     w + (size_t)row * KW + base, bytes);
+            }
+            tgx_cp_bulk_commit();
+            tgx_cp_bulk_wait0();
+        }
+        __syncwarp();
+        if (lane < L) {
+#pragma unroll
+            for (int r = 0; r < 2; ++r) {
+                const uint4 wv = ring[((c % TGX_CP_STAGES) * 2 + r) * 32 + lane];
+                acc[r] = tgx_chunk_dot(wv, x_s, base, L, lane, acc[r]);
+            }
+        }
+    }
+#pragma unroll
+    for (int r = 0; r < 2; ++r) acc[r] = tgx_warp_sum(acc[r]);
+    if (lane == 0) {
+#pragma unroll
+        for (int r = 0; r < 2; ++r) {
+            const int row = row0 + r;
+            if (row < N) tgx_epilogue(acc[r], xsum[0], xs[0], wscale[row], act, residual, out, row);
         }
     }
 }
