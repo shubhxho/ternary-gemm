@@ -93,7 +93,7 @@ jobs:
           submodules: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       # NVRTC and ptxas from NVIDIA's pip wheels: no CUDA toolkit or GPU needed.
@@ -179,7 +179,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: bindings/python
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Build and install the wheel
