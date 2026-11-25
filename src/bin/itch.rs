@@ -400,6 +400,7 @@ fn replay(args: &[String]) {
     let mut x = [0f32; FEATURES];
     let (mut wall_s, mut cpu_s, mut n_dec, mut unknown) = (0.0, 0.0, 0usize, 0u64);
     let mut checked = 0usize;
+    let mut feat_checked = 0usize;
     let ref_model = match (&engine, model.as_ref()) {
         (Engine::Ternary(_), Some(m)) => {
             Some(TernaryMlp::from_f32(&m.dims, &m.weights, &m.biases, m.act).unwrap())
@@ -410,6 +411,10 @@ fn replay(args: &[String]) {
         let record = pass == 1;
         let mut book = Book::new(&track);
         let mut st = vec![FeatState::default(); 65536];
+        // Warm-up pass only: the reference feature extractor on its own state, compared bit for
+        // bit with the optimized one on every decision (outside the timed pass).
+        let mut st_ref: std::collections::HashMap<u16, FeatState> = Default::default();
+        let mut x_ref = [0f32; FEATURES];
         t_parse.clear();
         t_book.clear();
         n_dec = 0;
@@ -426,7 +431,30 @@ fn replay(args: &[String]) {
             }
             let Some(u) = upd else { continue };
             let sb = book.sym(u.locate).unwrap();
-            let Some(d) = itch::features(sb, &mut st[u.locate as usize], &u, &mut x) else {
+            let fd = itch::features(sb, &mut st[u.locate as usize], &u, &mut x);
+            if !record {
+                let r = itch::features_reference(
+                    sb,
+                    st_ref.entry(u.locate).or_default(),
+                    &u,
+                    &mut x_ref,
+                );
+                assert_eq!(
+                    fd.is_some(),
+                    r.is_some(),
+                    "features != reference (decision flag)"
+                );
+                if fd.is_some() {
+                    assert!(
+                        x.iter()
+                            .zip(&x_ref)
+                            .all(|(a, b)| a.to_bits() == b.to_bits()),
+                        "features != features_reference"
+                    );
+                    feat_checked += 1;
+                }
+            }
+            let Some(d) = fd else {
                 continue;
             };
             if let Some(mf) = model.as_ref() {
@@ -515,6 +543,7 @@ fn replay(args: &[String]) {
     if checked > 0 {
         println!("ternary engine bit-exact vs scalar reference on {checked} replayed decisions");
     }
+    println!("features bit-exact vs features_reference on {feat_checked} decisions (warm-up pass)");
     println!();
     println!("| stage (ns)                         |          n |     mean |      p50 |      p90 |      p99 |    p99.9 |        max |");
     println!("|---|---|---|---|---|---|---|---|");
@@ -551,7 +580,7 @@ fn replay(args: &[String]) {
             .map(|(l, s)| format!("{{\"locate\": {l}, \"symbol\": \"{s}\"}}"))
             .collect();
         let j = format!(
-            "{{\n\"engine\": \"{engine_kind}\", \"engine_desc\": \"{engine_desc}\", \"simd\": \"{}\",\n\"data\": \"{data}\", \"symbols\": [{}],\n\"messages\": {n_msgs}, \"decisions\": {n_dec}, \"unknown_refs\": {unknown}, \"ns_per_tick\": {ns}, \"timer_overhead_p50_ns\": {:.1},\n\"replay_throughput_msgs_per_s\": {mps:.0}, \"replay_clean_wall_s\": {clean_s:.4}, \"timed_wall_s\": {wall_s:.4}, \"timed_cpu_s\": {cpu_s:.4},\n\"bitexact_checked\": {checked},\n{},\n{},\n{},\n{},\n{},\n{}\n}}\n",
+            "{{\n\"engine\": \"{engine_kind}\", \"engine_desc\": \"{engine_desc}\", \"simd\": \"{}\",\n\"data\": \"{data}\", \"symbols\": [{}],\n\"messages\": {n_msgs}, \"decisions\": {n_dec}, \"unknown_refs\": {unknown}, \"ns_per_tick\": {ns}, \"timer_overhead_p50_ns\": {:.1},\n\"replay_throughput_msgs_per_s\": {mps:.0}, \"replay_clean_wall_s\": {clean_s:.4}, \"timed_wall_s\": {wall_s:.4}, \"timed_cpu_s\": {cpu_s:.4},\n\"bitexact_checked\": {checked}, \"features_bitexact_checked\": {feat_checked},\n{},\n{},\n{},\n{},\n{},\n{}\n}}\n",
             cpu_simd_level(),
             syms.join(", "),
             ovh_s.p50,

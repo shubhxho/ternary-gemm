@@ -150,27 +150,53 @@ unsafe fn quantize_avx512(x: &[f32], q: &mut [i8], max_abs: Option<f32>) -> (f32
     let m = match max_abs {
         Some(m) => m,
         None => {
-            let mut mv = _mm512_setzero_ps();
+            // Two independent max chains (max is exact and order independent for non-NaN).
+            let (mut m0, mut m1) = (_mm512_setzero_ps(), _mm512_setzero_ps());
             let mut i = 0;
+            while i + 32 <= n {
+                m0 = _mm512_max_ps(m0, _mm512_abs_ps(_mm512_loadu_ps(p.add(i))));
+                m1 = _mm512_max_ps(m1, _mm512_abs_ps(_mm512_loadu_ps(p.add(i + 16))));
+                i += 32;
+            }
             while i < n {
-                mv = _mm512_max_ps(mv, _mm512_abs_ps(_mm512_maskz_loadu_ps(mask(i), p.add(i))));
+                m0 = _mm512_max_ps(m0, _mm512_abs_ps(_mm512_maskz_loadu_ps(mask(i), p.add(i))));
                 i += 16;
             }
-            _mm512_reduce_max_ps(mv)
+            _mm512_reduce_max_ps(_mm512_max_ps(m0, m1))
         }
     };
     let s = 127.0f32 / m.max(1e-5);
     let sv = _mm512_set1_ps(s);
     let (lo, hi) = (_mm512_set1_ps(-128.0), _mm512_set1_ps(127.0));
+    // Clamping to the integer bounds before rounding gives the same integer as rounding first
+    // (both bounds are integers and rounding is monotonic), so one `vcvtps2dq {rn-sae}` replaces
+    // `vrndscaleps` + `vcvtps2dq`.
+    let conv = |x: __m512| {
+        _mm512_cvt_roundps_epi32::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(
+            _mm512_min_ps(_mm512_max_ps(_mm512_mul_ps(x, sv), lo), hi),
+        )
+    };
     let mut sum = _mm512_setzero_si512();
     let qp = q.as_mut_ptr();
     let mut i = 0;
+    // 64 at a time: saturating packs (no-ops after the clamp) + one lane fix-up, one store.
+    let fix = _mm512_setr_epi32(0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15);
+    while i + 64 <= n {
+        let a = conv(_mm512_loadu_ps(p.add(i)));
+        let b = conv(_mm512_loadu_ps(p.add(i + 16)));
+        let c = conv(_mm512_loadu_ps(p.add(i + 32)));
+        let d = conv(_mm512_loadu_ps(p.add(i + 48)));
+        sum = _mm512_add_epi32(
+            sum,
+            _mm512_add_epi32(_mm512_add_epi32(a, b), _mm512_add_epi32(c, d)),
+        );
+        let bytes = _mm512_packs_epi16(_mm512_packs_epi32(a, b), _mm512_packs_epi32(c, d));
+        _mm512_storeu_si512(qp.add(i) as *mut _, _mm512_permutexvar_epi32(fix, bytes));
+        i += 64;
+    }
     while i < n {
         let k = mask(i);
-        let t = _mm512_roundscale_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(
-            _mm512_mul_ps(_mm512_maskz_loadu_ps(k, p.add(i)), sv),
-        );
-        let v = _mm512_cvtps_epi32(_mm512_min_ps(_mm512_max_ps(t, lo), hi));
+        let v = conv(_mm512_maskz_loadu_ps(k, p.add(i)));
         sum = _mm512_mask_add_epi32(sum, k, sum, v);
         _mm512_mask_cvtepi32_storeu_epi8(qp.add(i) as *mut _, k, v);
         i += 16;
