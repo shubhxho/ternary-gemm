@@ -2,7 +2,7 @@
 //! equivalence, halting, injection modes and CPU-backend parity with the reference GEMM.
 
 use half::f16;
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{rngs::StdRng, RngExt, SeedableRng};
 use ternary_gemm::looped::*;
 use ternary_gemm::reference::{self, QuantizedActs};
 

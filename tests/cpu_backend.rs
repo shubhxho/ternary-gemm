@@ -1,7 +1,7 @@
 //! The CPU GEMM backend must be bit-identical to the reference for any batch and thread count.
 
 use half::f16;
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{rngs::StdRng, RngExt, SeedableRng};
 use ternary_gemm::cpu::CpuTernary;
 use ternary_gemm::pack::PackedTernary;
 use ternary_gemm::reference::{gemm_i8, quantize_acts};
@@ -52,7 +52,7 @@ fn cpu_gemm_bit_exact_any_batch_and_threads() {
 #[test]
 fn fast_quantize_matches_reference() {
     use half::f16;
-    use rand::{rngs::StdRng, Rng, SeedableRng};
+    use rand::{rngs::StdRng, RngExt, SeedableRng};
     let mut rng = StdRng::seed_from_u64(77);
     for &(batch, k) in &[(1usize, 64usize), (3, 100), (16, 2560), (5, 1024), (2, 7)] {
         for scale in [1e-6f32, 1.0, 300.0] {
@@ -79,7 +79,7 @@ fn fast_quantize_matches_reference() {
 #[test]
 fn zero_padding_k_is_exact() {
     use half::f16;
-    use rand::{rngs::StdRng, Rng, SeedableRng};
+    use rand::{rngs::StdRng, RngExt, SeedableRng};
     use ternary_gemm::pack::{pad_k, pad_k_acts};
     let mut rng = StdRng::seed_from_u64(9);
     for &(n, k, batch) in &[(5usize, 100usize, 3usize), (3, 1, 1), (7, 130, 17)] {
