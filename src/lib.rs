@@ -27,6 +27,7 @@ pub mod autotune;
 #[cfg(feature = "convert")]
 pub mod convert;
 pub mod cpu;
+pub mod cpu_lanes;
 pub mod cpu_packed;
 pub mod cuda_ext;
 pub mod energy;
