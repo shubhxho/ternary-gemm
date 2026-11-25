@@ -10,6 +10,11 @@
 //! latency only, nothing about trading performance.
 //!
 //! usage: latency [--iters N] [--warmup N] [--models tiny,small,medium] [--csv FILE] [--cpu-only] [--energy] [--json FILE]
+//!                [--threads N] [--byte-codes] [--skip-reference]
+//!
+//! `--threads N` adds a `CpuEngine::with_threads(N)` row (pin to N cores, e.g. `taskset -c 2-5`),
+//! `--byte-codes` adds the 1-byte-per-weight SIMD path next to the packed one, and
+//! `--skip-reference` drops the slow scalar oracle timing (outputs are still checked against it).
 //!
 //! `--energy` also measures energy per inference for the CPU paths with RAPL (and NVML with the
 //! `nvml` feature); it prints "unavailable" when the host exposes no counters.
@@ -41,6 +46,9 @@ struct Opts {
     json: Option<String>,
     cpu_only: bool,
     energy: bool,
+    threads: usize,
+    byte_codes: bool,
+    skip_reference: bool,
 }
 
 fn parse() -> Opts {
@@ -52,6 +60,9 @@ fn parse() -> Opts {
         json: None,
         cpu_only: false,
         energy: false,
+        threads: 1,
+        byte_codes: false,
+        skip_reference: false,
     };
     let a: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -63,6 +74,17 @@ fn parse() -> Opts {
             "--models" => o.models = v.split(',').map(str::to_string).collect(),
             "--csv" => o.csv = Some(v),
             "--json" => o.json = Some(v),
+            "--threads" => o.threads = v.parse().expect("--threads N"),
+            "--byte-codes" => {
+                o.byte_codes = true;
+                i += 1;
+                continue;
+            }
+            "--skip-reference" => {
+                o.skip_reference = true;
+                i += 1;
+                continue;
+            }
             "--cpu-only" => {
                 o.cpu_only = true;
                 i += 1;
@@ -243,6 +265,9 @@ fn main() {
                 json: None,
                 cpu_only: true,
                 energy: false,
+                threads: 1,
+                byte_codes: false,
+                skip_reference: true,
             },
             |_| {},
         );
@@ -271,11 +296,13 @@ fn main() {
         let mut out = vec![0f32; outd];
         let cpu_dev = format!("CPU: {cpu}");
 
-        let us = time_each(&o, |i| {
-            let y = m.forward_reference(&pool[i % 256]);
-            std::hint::black_box(&y);
-        });
-        report(&label, "CPU ternary scalar reference", &cpu_dev, us);
+        if !o.skip_reference {
+            let us = time_each(&o, |i| {
+                let y = m.forward_reference(&pool[i % 256]);
+                std::hint::black_box(&y);
+            });
+            report(&label, "CPU ternary scalar reference", &cpu_dev, us);
+        }
 
         let mut eng = CpuEngine::new(&m).unwrap();
         for (x, r) in pool.iter().zip(&refs) {
@@ -287,6 +314,31 @@ fn main() {
             std::hint::black_box(&out);
         });
         report(&label, "CPU ternary SIMD (CpuEngine)", &cpu_dev, us);
+        if o.byte_codes {
+            let mut e = CpuEngine::new(&m).unwrap().without_packed();
+            for (x, r) in pool.iter().zip(&refs) {
+                e.forward_into(x, &mut out);
+                assert_eq!(bits(r), bits(&out), "byte-code CpuEngine mismatch");
+            }
+            let us = time_each(&o, |i| {
+                e.forward_into(&pool[i % 256], &mut out);
+                std::hint::black_box(&out);
+            });
+            report(&label, "CPU ternary SIMD byte codes", &cpu_dev, us);
+        }
+        if o.threads > 1 {
+            let mut e = CpuEngine::new(&m).unwrap().with_threads(o.threads);
+            for (x, r) in pool.iter().zip(&refs) {
+                e.forward_into(x, &mut out);
+                assert_eq!(bits(r), bits(&out), "threaded CpuEngine mismatch");
+            }
+            let us = time_each(&o, |i| {
+                e.forward_into(&pool[i % 256], &mut out);
+                std::hint::black_box(&out);
+            });
+            let path = format!("CPU ternary SIMD x{} threads", o.threads);
+            report(&label, &path, &cpu_dev, us);
+        }
         if o.energy {
             let iters = o.iters as u64;
             let r = meter.measure(iters, || {

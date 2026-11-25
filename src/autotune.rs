@@ -9,8 +9,8 @@
 //! Timings compare "quantize + gemm" (split) against the fused single-launch kernel on equal
 //! terms: both include activation quantization.
 
-use crate::gpu::{time_us, Gpu, Launch, Result, BATCH_TILES};
-use crate::tuning::{candidates, profile_for, ArchSpec, KernelConfig};
+use crate::gpu::{time_us, Backend, Gpu, Launch, Result, BATCH_TILES};
+use crate::tuning::{candidates, profile_for, ArchSpec, KernelBackend, KernelConfig};
 use std::collections::HashMap;
 
 /// The tuned choice for one problem shape. All times are measured on the device.
@@ -34,6 +34,10 @@ impl TuneEntry {
         Launch {
             rows_per_warp: Some(self.best.rows_per_warp),
             warps: self.best.warps,
+            backend: match self.best.backend {
+                KernelBackend::Dp4a => Backend::Dp4a,
+                KernelBackend::TensorCore => Backend::TensorCore,
+            },
         }
     }
 }
@@ -59,12 +63,15 @@ fn tile(batch: usize) -> usize {
 
 /// Kernel name for a config at a batch size.
 pub fn kernel_name(cfg: KernelConfig, batch: usize) -> String {
-    format!(
-        "ternary_i8_{}b{}_r{}",
-        if cfg.fused { "fused_" } else { "" },
-        tile(batch),
-        cfg.rows_per_warp
-    )
+    match cfg.backend {
+        KernelBackend::TensorCore => "ternary_tc_i8".into(),
+        KernelBackend::Dp4a => format!(
+            "ternary_i8_{}b{}_r{}",
+            if cfg.fused { "fused_" } else { "" },
+            tile(batch),
+            cfg.rows_per_warp
+        ),
+    }
 }
 
 impl<'g> Autotuner<'g> {
@@ -90,7 +97,18 @@ impl<'g> Autotuner<'g> {
         spec.smem_per_block_optin = spec
             .smem_per_block_optin
             .min(self.gpu.info.fused_smem_limit as u32 + 1024);
-        candidates(&spec, self.gpu.info.sm_count, n, k, batch, self.top)
+        let mut c = candidates(&spec, self.gpu.info.sm_count, n, k, batch, self.top);
+        // Tensor-core candidates are not in the dp4a analytic model; time them whenever
+        // the device actually compiled the mma.sync kernels.
+        if self.gpu.supports_tensor_cores() {
+            for warps in [1u32, 2, 4, 8] {
+                let tc = KernelConfig::tensor_core(warps);
+                if !c.contains(&tc) {
+                    c.push(tc);
+                }
+            }
+        }
+        c
     }
 
     /// Time every candidate for `(n, k, batch)` and cache the fastest.
@@ -113,11 +131,7 @@ impl<'g> Autotuner<'g> {
                 })
             }
         };
-        let default_cfg = KernelConfig {
-            warps: 4,
-            rows_per_warp: g.pick_rows_per_warp(n, 4),
-            fused: false,
-        };
+        let default_cfg = KernelConfig::dp4a(4, g.pick_rows_per_warp(n, 4), false);
         let default_us = time(default_cfg, Launch::default())?;
         let mut best = (default_cfg, default_us);
         let space = self.search_space(n, k, batch);
@@ -125,6 +139,10 @@ impl<'g> Autotuner<'g> {
             let l = Launch {
                 rows_per_warp: Some(cfg.rows_per_warp),
                 warps: cfg.warps,
+                backend: match cfg.backend {
+                    KernelBackend::Dp4a => Backend::Dp4a,
+                    KernelBackend::TensorCore => Backend::TensorCore,
+                },
             };
             // A config the device rejects (e.g. smem) is skipped, not fatal.
             if let Ok(us) = time(cfg, l) {
@@ -151,16 +169,22 @@ impl<'g> Autotuner<'g> {
         self.gpu.kernel_regs(&kernel_name(cfg, batch))
     }
 
-    /// CSV cache: `device,n,k,batch,warps,rows_per_warp,fused,best_us,default_us,tried`.
+    /// CSV cache: `device,n,k,batch,warps,rows_per_warp,fused,best_us,default_us,tried[,backend]`.
+    /// `backend` is `dp4a` or `tc`; older 10-column files are read as `dp4a`.
     pub fn to_csv(&self) -> String {
         let mut rows: Vec<&TuneEntry> = self.cache.values().collect();
         rows.sort_by_key(|e| (e.n, e.k, e.batch));
         let dev = self.gpu.info.name.replace(',', " ");
-        let mut s =
-            String::from("device,n,k,batch,warps,rows_per_warp,fused,best_us,default_us,tried\n");
+        let mut s = String::from(
+            "device,n,k,batch,warps,rows_per_warp,fused,best_us,default_us,tried,backend\n",
+        );
         for e in rows {
+            let backend = match e.best.backend {
+                KernelBackend::Dp4a => "dp4a",
+                KernelBackend::TensorCore => "tc",
+            };
             s += &format!(
-                "{dev},{},{},{},{},{},{},{:.3},{:.3},{}\n",
+                "{dev},{},{},{},{},{},{},{:.3},{:.3},{},{backend}\n",
                 e.n,
                 e.k,
                 e.batch,
@@ -190,12 +214,25 @@ impl<'g> Autotuner<'g> {
     }
 }
 
+fn parse_backend(s: &str) -> Option<KernelBackend> {
+    match s {
+        "dp4a" | "" => Some(KernelBackend::Dp4a),
+        "tc" | "tensor_core" | "tensor-core" => Some(KernelBackend::TensorCore),
+        _ => None,
+    }
+}
+
 fn parse_row(line: &str, dev: &str) -> Option<TuneEntry> {
     let f: Vec<&str> = line.split(',').collect();
-    if f.len() != 10 || f[0] != dev {
+    if f.len() < 10 || f.len() > 11 || f[0] != dev {
         return None;
     }
     let u = |i: usize| f[i].parse::<usize>().ok();
+    let backend = if f.len() == 11 {
+        parse_backend(f[10])?
+    } else {
+        KernelBackend::Dp4a
+    };
     Some(TuneEntry {
         n: u(1)?,
         k: u(2)?,
@@ -204,6 +241,7 @@ fn parse_row(line: &str, dev: &str) -> Option<TuneEntry> {
             warps: f[4].parse().ok()?,
             rows_per_warp: f[5].parse().ok()?,
             fused: f[6] == "1",
+            backend,
         },
         best_us: f[7].parse().ok()?,
         default_us: f[8].parse().ok()?,
@@ -217,14 +255,18 @@ mod tests {
 
     #[test]
     fn kernel_names_match_the_instantiations() {
-        let c = |warps, rows_per_warp, fused| KernelConfig {
-            warps,
-            rows_per_warp,
-            fused,
-        };
+        let c = |warps, rows_per_warp, fused| KernelConfig::dp4a(warps, rows_per_warp, fused);
         assert_eq!(kernel_name(c(4, 2, false), 3), "ternary_i8_b4_r2");
         assert_eq!(kernel_name(c(8, 4, true), 16), "ternary_i8_fused_b16_r4");
         assert_eq!(kernel_name(c(1, 1, false), 1), "ternary_i8_b1_r1");
+        assert_eq!(
+            kernel_name(KernelConfig::tensor_core(4), 1),
+            "ternary_tc_i8"
+        );
+        assert_eq!(
+            kernel_name(KernelConfig::tensor_core(8), 16),
+            "ternary_tc_i8"
+        );
     }
 
     #[test]
@@ -232,16 +274,13 @@ mod tests {
         let line = "NVIDIA GeForce RTX 5090,2560,2560,1,4,2,1,3.500,4.250,11";
         let e = parse_row(line, "NVIDIA GeForce RTX 5090").unwrap();
         assert_eq!((e.n, e.k, e.batch), (2560, 2560, 1));
-        assert_eq!(
-            e.best,
-            KernelConfig {
-                warps: 4,
-                rows_per_warp: 2,
-                fused: true
-            }
-        );
+        assert_eq!(e.best, KernelConfig::dp4a(4, 2, true));
         assert_eq!(e.launch().rows_per_warp, Some(2));
         assert!(parse_row(line, "Other GPU").is_none());
         assert!(parse_row("garbage", "NVIDIA GeForce RTX 5090").is_none());
+        let tc = "NVIDIA GeForce RTX 5090,2560,2560,1,4,16,0,3.100,4.250,12,tc";
+        let e = parse_row(tc, "NVIDIA GeForce RTX 5090").unwrap();
+        assert_eq!(e.best, KernelConfig::tensor_core(4));
+        assert_eq!(e.launch().backend, Backend::TensorCore);
     }
 }

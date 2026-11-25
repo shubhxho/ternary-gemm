@@ -1,5 +1,6 @@
-   Compiling ternary-gemm v0.1.0 (/workspace/ternary-gemm)
-NVRTC compute_80: OK in 4.3s, 55 kernels, PTX -> target/ptx/ternary_compute_80.ptx
+NVRTC compute_80: OK in 4.5s, 55 kernels, PTX -> target/ptx/ternary_compute_80.ptx
+NVRTC compute_80 tensor-core: OK, 2 kernels, PTX -> target/ptx/tensor_core_compute_80.ptx
+NVRTC compute_80 ext (cp.async/split-K/LUT/warp-spec): OK, 7 kernels, PTX -> target/ptx/ternary_ext_compute_80.ptx
   sm_80 bias_act_f16                 Used 12 registers, used 0 barriers, 384 bytes cmem[0]
   sm_80 f32_to_f16                   Used 8 registers, used 0 barriers, 372 bytes cmem[0]
   sm_80 ternary_mlp_persistent       Used 30 registers, used 1 barriers, 272 bytes smem, 420 bytes cmem[0], 24 bytes cmem[2]
@@ -58,7 +59,20 @@ NVRTC compute_80: OK in 4.3s, 55 kernels, PTX -> target/ptx/ternary_compute_80.p
   sm_80 ternary_i8_b1_r1             Used 32 registers, used 0 barriers, 420 bytes cmem[0]
   sm_80 quantize_i8                  Used 26 registers, used 1 barriers, 256 bytes smem, 400 bytes cmem[0], 8 bytes cmem[2]
   sm_80: ptxas OK, 2 kernels with register spills
+  sm_80 tgx_gemv_warpspec            Used 32 registers, used 5 barriers, 420 bytes cmem[0]
+  sm_80 tgx_gemv_lut                 Used 48 registers, used 1 barriers, 32768 bytes smem, 420 bytes cmem[0]
+  sm_80 tgx_splitk_finalize          Used 20 registers, used 0 barriers, 408 bytes cmem[0]
+  sm_80 tgx_gemv_splitk_r2           Used 40 registers, used 0 barriers, 384 bytes cmem[0]
+  sm_80 tgx_gemv_cpasync_r4          Used 60 registers, used 1 barriers, 420 bytes cmem[0]
+  sm_80 tgx_gemv_cpasync_r2          Used 42 registers, used 1 barriers, 420 bytes cmem[0]
+  sm_80 tgx_gemv_cpasync_r1          Used 40 registers, used 1 barriers, 420 bytes cmem[0]
+  sm_80 ext: ptxas OK, 0 kernels with register spills
+  sm_80 ternary_tc_f16               Used 40 registers, used 1 barriers, 512 bytes smem, 404 bytes cmem[0]
+  sm_80 ternary_tc_i8                Used 32 registers, used 1 barriers, 256 bytes smem, 412 bytes cmem[0]
+  sm_80 tensor-core: ptxas OK, 0 kernels with register spills
 NVRTC compute_86: OK in 4.1s, 55 kernels, PTX -> target/ptx/ternary_compute_86.ptx
+NVRTC compute_86 tensor-core: OK, 2 kernels, PTX -> target/ptx/tensor_core_compute_86.ptx
+NVRTC compute_86 ext (cp.async/split-K/LUT/warp-spec): OK, 7 kernels, PTX -> target/ptx/ternary_ext_compute_86.ptx
   sm_86 bias_act_f16                 Used 12 registers, used 0 barriers, 384 bytes cmem[0]
   sm_86 f32_to_f16                   Used 8 registers, used 0 barriers, 372 bytes cmem[0]
   sm_86 ternary_mlp_persistent       Used 52 registers, used 1 barriers, 272 bytes smem, 420 bytes cmem[0], 24 bytes cmem[2]
@@ -116,7 +130,20 @@ NVRTC compute_86: OK in 4.1s, 55 kernels, PTX -> target/ptx/ternary_compute_86.p
   sm_86 ternary_i8_b1_r1             Used 38 registers, used 0 barriers, 420 bytes cmem[0]
   sm_86 quantize_i8                  Used 27 registers, used 1 barriers, 256 bytes smem, 400 bytes cmem[0], 8 bytes cmem[2]
   sm_86: ptxas OK, 1 kernels with register spills
-NVRTC compute_89: OK in 4.1s, 55 kernels, PTX -> target/ptx/ternary_compute_89.ptx
+  sm_86 tgx_gemv_warpspec            Used 40 registers, used 5 barriers, 420 bytes cmem[0]
+  sm_86 tgx_gemv_lut                 Used 62 registers, used 1 barriers, 32768 bytes smem, 420 bytes cmem[0]
+  sm_86 tgx_splitk_finalize          Used 18 registers, used 0 barriers, 408 bytes cmem[0]
+  sm_86 tgx_gemv_splitk_r2           Used 40 registers, used 0 barriers, 384 bytes cmem[0]
+  sm_86 tgx_gemv_cpasync_r4          Used 60 registers, used 1 barriers, 420 bytes cmem[0]
+  sm_86 tgx_gemv_cpasync_r2          Used 42 registers, used 1 barriers, 420 bytes cmem[0]
+  sm_86 tgx_gemv_cpasync_r1          Used 40 registers, used 1 barriers, 420 bytes cmem[0]
+  sm_86 ext: ptxas OK, 0 kernels with register spills
+  sm_86 ternary_tc_f16               Used 38 registers, used 1 barriers, 512 bytes smem, 404 bytes cmem[0]
+  sm_86 ternary_tc_i8                Used 38 registers, used 1 barriers, 256 bytes smem, 412 bytes cmem[0]
+  sm_86 tensor-core: ptxas OK, 0 kernels with register spills
+NVRTC compute_89: OK in 4.2s, 55 kernels, PTX -> target/ptx/ternary_compute_89.ptx
+NVRTC compute_89 tensor-core: OK, 2 kernels, PTX -> target/ptx/tensor_core_compute_89.ptx
+NVRTC compute_89 ext (cp.async/split-K/LUT/warp-spec): OK, 7 kernels, PTX -> target/ptx/ternary_ext_compute_89.ptx
   sm_89 bias_act_f16                 Used 12 registers, used 0 barriers, 384 bytes cmem[0]
   sm_89 f32_to_f16                   Used 8 registers, used 0 barriers, 372 bytes cmem[0]
   sm_89 ternary_mlp_persistent       Used 52 registers, used 1 barriers, 272 bytes smem, 420 bytes cmem[0], 24 bytes cmem[2]
@@ -174,7 +201,20 @@ NVRTC compute_89: OK in 4.1s, 55 kernels, PTX -> target/ptx/ternary_compute_89.p
   sm_89 ternary_i8_b1_r1             Used 38 registers, used 0 barriers, 420 bytes cmem[0]
   sm_89 quantize_i8                  Used 27 registers, used 1 barriers, 256 bytes smem, 400 bytes cmem[0], 8 bytes cmem[2]
   sm_89: ptxas OK, 1 kernels with register spills
-NVRTC compute_90: OK in 4.1s, 55 kernels, PTX -> target/ptx/ternary_compute_90.ptx
+  sm_89 tgx_gemv_warpspec            Used 40 registers, used 5 barriers, 420 bytes cmem[0]
+  sm_89 tgx_gemv_lut                 Used 48 registers, used 1 barriers, 32768 bytes smem, 420 bytes cmem[0]
+  sm_89 tgx_splitk_finalize          Used 18 registers, used 0 barriers, 408 bytes cmem[0]
+  sm_89 tgx_gemv_splitk_r2           Used 40 registers, used 0 barriers, 384 bytes cmem[0]
+  sm_89 tgx_gemv_cpasync_r4          Used 60 registers, used 1 barriers, 420 bytes cmem[0]
+  sm_89 tgx_gemv_cpasync_r2          Used 42 registers, used 1 barriers, 420 bytes cmem[0]
+  sm_89 tgx_gemv_cpasync_r1          Used 40 registers, used 1 barriers, 420 bytes cmem[0]
+  sm_89 ext: ptxas OK, 0 kernels with register spills
+  sm_89 ternary_tc_f16               Used 38 registers, used 1 barriers, 512 bytes smem, 404 bytes cmem[0]
+  sm_89 ternary_tc_i8                Used 38 registers, used 1 barriers, 256 bytes smem, 412 bytes cmem[0]
+  sm_89 tensor-core: ptxas OK, 0 kernels with register spills
+NVRTC compute_90: OK in 4.4s, 55 kernels, PTX -> target/ptx/ternary_compute_90.ptx
+NVRTC compute_90 tensor-core: OK, 2 kernels, PTX -> target/ptx/tensor_core_compute_90.ptx
+NVRTC compute_90 ext (cp.async/split-K/LUT/warp-spec): OK, 7 kernels, PTX -> target/ptx/ternary_ext_compute_90.ptx
   sm_90 bias_act_f16                 Used 12 registers, used 0 barriers
   sm_90 f32_to_f16                   Used 10 registers, used 0 barriers
   sm_90 ternary_mlp_persistent       Used 30 registers, used 1 barriers, 272 bytes smem
@@ -231,7 +271,20 @@ NVRTC compute_90: OK in 4.1s, 55 kernels, PTX -> target/ptx/ternary_compute_90.p
   sm_90 ternary_i8_b1_r1             Used 32 registers, used 0 barriers
   sm_90 quantize_i8                  Used 28 registers, used 1 barriers, 256 bytes smem
   sm_90: ptxas OK, 0 kernels with register spills
+  sm_90 tgx_gemv_warpspec            Used 40 registers, used 5 barriers
+  sm_90 tgx_gemv_lut                 Used 48 registers, used 1 barriers, 32768 bytes smem
+  sm_90 tgx_splitk_finalize          Used 18 registers, used 0 barriers
+  sm_90 tgx_gemv_splitk_r2           Used 40 registers, used 0 barriers
+  sm_90 tgx_gemv_cpasync_r4          Used 63 registers, used 1 barriers
+  sm_90 tgx_gemv_cpasync_r2          Used 46 registers, used 1 barriers
+  sm_90 tgx_gemv_cpasync_r1          Used 43 registers, used 1 barriers
+  sm_90 ext: ptxas OK, 0 kernels with register spills
+  sm_90 ternary_tc_f16               Used 37 registers, used 1 barriers, 512 bytes smem
+  sm_90 ternary_tc_i8                Used 39 registers, used 1 barriers, 256 bytes smem
+  sm_90 tensor-core: ptxas OK, 0 kernels with register spills
 NVRTC compute_120: OK in 4.8s, 55 kernels, PTX -> target/ptx/ternary_compute_120.ptx
+NVRTC compute_120 tensor-core: OK, 2 kernels, PTX -> target/ptx/tensor_core_compute_120.ptx
+NVRTC compute_120 ext (cp.async/split-K/LUT/warp-spec): OK, 7 kernels, PTX -> target/ptx/ternary_ext_compute_120.ptx
   sm_120 bias_act_f16                 Used 12 registers, used 0 barriers
   sm_120 f32_to_f16                   Used 10 registers, used 0 barriers
   sm_120 ternary_mlp_persistent       Used 56 registers, used 1 barriers, 272 bytes smem
@@ -288,3 +341,14 @@ NVRTC compute_120: OK in 4.8s, 55 kernels, PTX -> target/ptx/ternary_compute_120
   sm_120 ternary_i8_b1_r1             Used 38 registers, used 0 barriers
   sm_120 quantize_i8                  Used 50 registers, used 1 barriers, 256 bytes smem
   sm_120: ptxas OK, 0 kernels with register spills
+  sm_120 tgx_gemv_warpspec            Used 40 registers, used 5 barriers
+  sm_120 tgx_gemv_lut                 Used 48 registers, used 1 barriers, 32768 bytes smem
+  sm_120 tgx_splitk_finalize          Used 18 registers, used 0 barriers
+  sm_120 tgx_gemv_splitk_r2           Used 40 registers, used 0 barriers
+  sm_120 tgx_gemv_cpasync_r4          Used 66 registers, used 1 barriers
+  sm_120 tgx_gemv_cpasync_r2          Used 50 registers, used 1 barriers
+  sm_120 tgx_gemv_cpasync_r1          Used 43 registers, used 1 barriers
+  sm_120 ext: ptxas OK, 0 kernels with register spills
+  sm_120 ternary_tc_f16               Used 40 registers, used 1 barriers, 512 bytes smem
+  sm_120 ternary_tc_i8                Used 48 registers, used 1 barriers, 256 bytes smem
+  sm_120 tensor-core: ptxas OK, 0 kernels with register spills

@@ -120,5 +120,11 @@ proptest! {
             out.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
             want.iter().map(|v| v.to_bits()).collect::<Vec<_>>()
         );
+        let mut b = CpuEngine::new(&m).unwrap().without_packed();
+        b.forward_into(x, &mut out);
+        prop_assert_eq!(
+            out.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+            want.iter().map(|v| v.to_bits()).collect::<Vec<_>>()
+        );
     }
 }

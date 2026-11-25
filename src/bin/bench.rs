@@ -4,7 +4,7 @@
 //! Prints Markdown. Every GPU number printed is measured on the machine running this binary;
 //! sections that are estimates say so explicitly.
 //!
-//! Usage: cargo run --release --bin bench -- [--quick] [--batches 1,4,16] [--layers 30] [--no-verify] [--csv out.csv]
+//! Usage: cargo run --release --bin bench -- [--quick] [--batches 1,4,16] [--layers 30] [--no-verify] [--tensor-cores] [--csv out.csv]
 //! Env:   PEAK_GBPS=448   override the peak DRAM bandwidth used for "% of peak".
 
 use cudarc::driver::CudaSlice;
@@ -45,6 +45,8 @@ struct Opts {
     target_ms: f64,
     verify: bool,
     csv: Option<String>,
+    /// Also verify and time the tensor-core backend (sm_80+).
+    tensor_cores: bool,
 }
 
 fn parse() -> Opts {
@@ -55,6 +57,7 @@ fn parse() -> Opts {
         target_ms: 40.0,
         verify: true,
         csv: None,
+        tensor_cores: false,
     };
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -77,6 +80,7 @@ fn parse() -> Opts {
                 o.layers = args[i].parse().expect("layers");
             }
             "--no-verify" => o.verify = false,
+            "--tensor-cores" => o.tensor_cores = true,
             "--csv" => {
                 i += 1;
                 o.csv = Some(args[i].clone());
@@ -262,7 +266,15 @@ fn run(g: &Gpu, o: &Opts) -> Result<()> {
 
 fn verify(g: &Gpu, rng: &mut StdRng, o: &Opts) -> Result<()> {
     println!("## Correctness vs CPU reference (run before timing)\n");
-    println!("| shape | batch | int8 (quantize + gemv) | int8 fused | fp16 act. | naive int8 |\n|---|---|---|---|---|---|");
+    let tc = o.tensor_cores && g.supports_tensor_cores();
+    if o.tensor_cores && !g.supports_tensor_cores() {
+        println!("`--tensor-cores` requested, but this GPU (sm_{}.{}) does not expose the mma.sync path; skipping those checks.\n", g.info.compute_capability.0, g.info.compute_capability.1);
+    }
+    if tc {
+        println!("| shape | batch | int8 (quantize + gemv) | int8 fused | fp16 act. | naive int8 | tensor-core i8 | tensor-core f16 |\n|---|---|---|---|---|---|---|---|");
+    } else {
+        println!("| shape | batch | int8 (quantize + gemv) | int8 fused | fp16 act. | naive int8 |\n|---|---|---|---|---|---|");
+    }
     let mut all_ok = true;
     for &(n, k, _) in SHAPES {
         for &batch in &[1usize, *o.batches.iter().max().unwrap()] {
@@ -303,8 +315,27 @@ fn verify(g: &Gpu, rng: &mut StdRng, o: &Opts) -> Result<()> {
             let c = err <= 2e-3 * max_ref + 1e-3;
             all_ok &= a && b.unwrap_or(true) && c && d;
             let bx = |v: bool| if v { "bit-exact" } else { "**MISMATCH**" };
+            let mut extra = String::new();
+            if tc {
+                g.gemm_i8(&w, &acts, None, &mut out, Launch::tensor_core(4))?;
+                let tci = bitexact(g.download(&out)?);
+                g.gemm_f16(&w, &x, batch, None, &mut out, Launch::tensor_core(4))?;
+                let gotc = g.download(&out)?;
+                let errc = gotc
+                    .iter()
+                    .zip(&ef)
+                    .map(|(u, v)| (u.to_f32() - v).abs())
+                    .fold(0f32, f32::max);
+                let tcf = errc <= 2e-3 * max_ref + 1e-3;
+                all_ok &= tci && tcf;
+                extra = format!(
+                    " | {} | {}",
+                    bx(tci),
+                    if tcf { "within tol" } else { "**OUT OF TOL**" }
+                );
+            }
             println!(
-                "| {n} x {k} | {batch} | {} | {} | {} (max abs err {err:.2e}, max |y| {max_ref:.2}) | {} |",
+                "| {n} x {k} | {batch} | {} | {} | {} (max abs err {err:.2e}, max |y| {max_ref:.2}) | {}{extra} |",
                 bx(a),
                 b.map(bx).unwrap_or("n/a (smem)"),
                 if c { "within tol" } else { "**OUT OF TOL**" },
@@ -373,6 +404,7 @@ fn bench_shape(
             let l = Launch {
                 rows_per_warp: Some(r),
                 warps: 4,
+                ..Launch::default()
             };
             let t = measure(g, o, |i| f(l, i))?;
             if t < best.0 {
@@ -421,6 +453,41 @@ fn bench_shape(
         bytes: tern_bytes as f64 + x16 + y,
         note: format!("R={r}"),
     });
+
+    if o.tensor_cores && g.supports_tensor_cores() {
+        let l = Launch::tensor_core(4);
+        let mut acts_tc = g.alloc_acts(batch, k)?;
+        g.quantize(&x, None, 1e-5, &mut acts_tc)?;
+        let t = measure(g, o, |i| {
+            g.gemm_i8(&tw[i % nt], &acts_tc, None, &mut out, l)
+        })?;
+        rows.push(Row {
+            kernel: "**ternary W2A8 tensor-core**".into(),
+            us: t,
+            bytes: tern_bytes as f64 + xq + y,
+            note: "mma.sync m16n8k16 s8, pre-quantized acts, 4 warps".into(),
+        });
+        let t = measure(g, o, |i| {
+            g.quantize(&x, None, 1e-5, &mut acts_tc)?;
+            g.gemm_i8(&tw[i % nt], &acts_tc, None, &mut out, l)
+        })?;
+        rows.push(Row {
+            kernel: "**ternary W2A8 quantize + tensor-core**".into(),
+            us: t,
+            bytes: tern_bytes as f64 + x16 + y,
+            note: "2 launches, mma.sync, 4 warps".into(),
+        });
+        let t = measure(g, o, |i| {
+            g.gemm_f16(&tw[i % nt], &x, batch, None, &mut out, l)
+        })?;
+        rows.push(Row {
+            kernel: "ternary W2A16 tensor-core".into(),
+            us: t,
+            bytes: tern_bytes as f64 + x16 + y,
+            note: "mma.sync m16n8k16 f16, 4 warps".into(),
+        });
+    }
+
     Ok(rows)
 }
 
