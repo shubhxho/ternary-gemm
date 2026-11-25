@@ -64,6 +64,11 @@ All notable changes are listed here. The format follows
 
 ### Fixed
 * MSRV corrected to 1.88 (a transitive dependency of `cudarc` requires it).
+* Tensor-core path (`kernels/tensor_core.cu`) gave wrong results on real hardware (sm_120):
+  accumulator fragment order (d1/d2 swapped) in both kernels, fp16 A-fragment register order
+  (a1/a2 swapped), and warps past N returning before the cooperative activation load and
+  `__syncthreads()`. The CPU model in `src/tensor_core.rs` had the same C-fragment layout and is
+  corrected to the PTX ISA m16n8k16 table. All 85 tests pass on an RTX PRO 6000 Blackwell.
 
 ## [0.1.0] - 2026-11-22
 
